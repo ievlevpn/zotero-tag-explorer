@@ -1,6 +1,6 @@
 // Self-check for the pure helpers: `node test.js`.
 const assert = require("assert");
-const { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, groupByTitle } = require("./bootstrap.js");
+const { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, groupByTitle } = require("./bootstrap.js");
 
 assert.ok(fuzzy("", "anything"));
 assert.ok(fuzzy("mdv", "medieval"));
@@ -58,6 +58,19 @@ const counted = countByCollection([
 	{ colls: new Set() },
 ]);
 assert.deepStrictEqual([...counted], [[1, 2], [2, 1]]);
+
+// A rename onto an existing tag is a merge: a highlight that had both keeps one.
+// Only the libraries actually renamed are touched.
+const before = [
+	{ libraryID: 1, tags: ["take", "ref"] },
+	{ libraryID: 1, tags: ["take", "цитата"] },
+	{ libraryID: 2, tags: ["take"] },
+];
+assert.deepStrictEqual(renameInList(before, "take", "ref", new Set([1])), [
+	{ libraryID: 1, tags: ["ref"] },
+	{ libraryID: 1, tags: ["цитата", "ref"] },
+	{ libraryID: 2, tags: ["take"] },
+]);
 
 // One block per book, highlights inside it in reading order.
 const books = groupByTitle(list);

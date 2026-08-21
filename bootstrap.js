@@ -31,6 +31,16 @@ function safe(fn, fallback) {
 	try { return fn(); } catch (e) { oops(e); return fallback; }
 }
 
+// A parentless modal can end up invisible and block the app from ever quitting,
+// so it is always anchored to a window. Returns null on cancel.
+function promptValue(parent, text, initial) {
+	if (!parent) return null;
+	return safe(() => {
+		const out = { value: initial };
+		return Services.prompt.prompt(parent, "Tag Explorer", text, out, null, {}) ? out.value : null;
+	}, null);
+}
+
 // --- pure helpers (test.js checks these) -----------------------------------
 
 // Classic subsequence match: every character of the query appears in the text,
@@ -89,6 +99,20 @@ function countByCollection(list) {
 	return m;
 }
 
+// Mirror a finished rename in the index. Renaming onto a tag that already
+// exists is a merge, in Zotero and here: a highlight carrying both ends up
+// with one.
+function renameInList(list, oldName, newName, libs) {
+	for (const e of list) {
+		if (!libs.has(e.libraryID)) continue;
+		const at = e.tags.indexOf(oldName);
+		if (at < 0) continue;
+		e.tags.splice(at, 1);
+		if (!e.tags.includes(newName)) e.tags.push(newName);
+	}
+	return list;
+}
+
 // Highlights read as a book at a time: same title together, in reading order.
 function groupByTitle(list) {
 	const out = [];
@@ -141,6 +165,7 @@ async function buildIndex() {
 		if (!collsOf.has(top.id)) collsOf.set(top.id, collectionsOf(top));
 		out.push({
 			id: a.id,
+			libraryID: a.libraryID,
 			tags: safe(() => a.getTags().map((t) => t.tag), []),
 			type: a.annotationType,
 			color: a.annotationColor || "#888888",
@@ -194,7 +219,11 @@ body { margin:0; height:100vh; display:flex; flex-direction:column;
 .tag.on { background:Highlight; color:HighlightText; }
 .tag.on b { color:HighlightText; }
 .right { flex:1; overflow:auto; padding:12px 16px; }
-.right h1 { font-size:15px; margin:0 0 2px; }
+.right h1 { font-size:15px; margin:0 0 2px; min-width:0; overflow-wrap:anywhere; }
+.right .title { display:flex; align-items:baseline; gap:8px; }
+.right .title button { font:11px sans-serif; padding:2px 8px; border:1px solid GrayText;
+	border-radius:5px; background:transparent; color:CanvasText; cursor:pointer; white-space:nowrap; }
+.right .title button:hover { background:Highlight; color:HighlightText; }
 .right .sub { color:GrayText; font-size:11px; margin-bottom:14px; }
 .book { margin:18px 0 6px; padding-bottom:3px; border-bottom:1px solid GrayText;
 	font-weight:700; display:flex; justify-content:space-between; gap:8px; }
@@ -396,7 +425,12 @@ function build(w) {
 			return;
 		}
 		const rows = entries.filter((e) => inScope(e) && e.tags.includes(selected));
-		right.append(el(doc, "h1", null, selected));
+		const title = el(doc, "div", "title");
+		const rename = el(doc, "button", null, "Rename");
+		rename.title = "Rename this tag everywhere it is used";
+		rename.addEventListener("click", () => doRename(selected));
+		title.append(el(doc, "h1", null, selected), rename);
+		right.append(title);
 		right.append(el(doc, "div", "sub",
 			`${rows.length} highlight${rows.length === 1 ? "" : "s"}` + (scope ? " in this collection" : "")));
 
@@ -422,6 +456,29 @@ function build(w) {
 			}
 		};
 		paint();
+	}
+
+	// Zotero's own rename: every item in the library that carries the tag moves,
+	// the tag's colour follows it, and the change syncs. Which means it is not
+	// limited to annotations, or to the collection currently in scope.
+	async function doRename(tag) {
+		const next = (promptValue(w,
+			`Rename "${tag}" everywhere it is used — every item in the library, not just these highlights.\n\nNew name:`,
+			tag) || "").trim();
+		if (!next || next === tag) return;
+		const libs = new Set(entries.filter((e) => e.tags.includes(tag)).map((e) => e.libraryID));
+		try {
+			for (const lib of libs) await Zotero.Tags.rename(lib, tag, next);
+		} catch (e) {
+			oops(e);
+			return safe(() => Services.prompt.alert(w, "Tag Explorer", `Could not rename the tag: ${e.message}`));
+		}
+		renameInList(entries, tag, next, libs);
+		selected = next;
+		rescope();
+		countLabel.textContent = summary();
+		renderTags();
+		renderHighlights();
 	}
 
 	function card(e) {
@@ -532,5 +589,5 @@ function uninstall() {}
 
 // node-only: lets test.js import the pure helpers; no-op inside Zotero.
 if (typeof module !== "undefined") {
-	module.exports = { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, groupByTitle };
+	module.exports = { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, groupByTitle };
 }

@@ -16,6 +16,9 @@ A Zotero 10 plugin for reading your own marginalia by tag.
   fuzzy-searchable over the full path (`phil frank` finds *Philosophy /
   Frankfurt School*), showing how many highlights each holds,
   sub-collections included;
+- **Rename** next to a tag calls Zotero's own rename, so it moves every item
+  in the library that carries it — not just these highlights, and not just the
+  collection in scope — keeps the tag's colour and syncs;
 - the other tags on a highlight are chips: click one to jump to it;
 - click a highlight to open the reader on it.
 
