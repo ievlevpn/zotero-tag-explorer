@@ -1,6 +1,6 @@
 # Tag Explorer
 
-A Zotero 7 plugin for reading your own marginalia by tag.
+A Zotero 10 plugin for reading your own marginalia by tag.
 
 **Tools → Tag Explorer…** opens a window:
 

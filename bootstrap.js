@@ -1,4 +1,4 @@
-/* Tag Explorer — a tiny Zotero plugin (bootstrapped, Zotero 7+).
+/* Tag Explorer — a tiny Zotero plugin (bootstrapped, Zotero 10).
  *
  * Tools → Tag Explorer opens a window: fuzzy-search your tags on the left,
  * read the highlights and comments carrying that tag on the right, optionally

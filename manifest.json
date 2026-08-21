@@ -1,7 +1,7 @@
 {
 	"manifest_version": 2,
 	"name": "Tag Explorer",
-	"version": "0.2.0",
+	"version": "0.2.1",
 	"description": "Browse your annotation tags: fuzzy-search every tag, read the highlights and comments behind it, restricted to a collection if you like.",
 	"author": "Pavel Ievlev",
 	"icons": {
@@ -12,8 +12,8 @@
 		"zotero": {
 			"id": "tag-explorer@local",
 			"update_url": "https://raw.githubusercontent.com/ievlevpn/zotero-tag-explorer/master/update.json",
-			"strict_min_version": "6.999",
-			"strict_max_version": "10.*"
+			"strict_min_version": "10.0",
+			"strict_max_version": "11.*"
 		}
 	}
 }
