@@ -5,8 +5,11 @@ A Zotero 10 plugin for reading your own marginalia by tag.
 **Tools → Tag Explorer…** opens a window:
 
 - every tag you have put on a highlight, most used first, with a fuzzy search
-  box (`hdg` finds `Хайдеггер`; exact matches sort above prefixes above
-  substrings above scattered ones);
+  box: your letters have to appear in the tag in order, but need not be
+  adjacent, so `mdvl` finds `medieval` and `хдг` finds `Хайдеггер`. Matching
+  is literal and case-insensitive — there is no transliteration, so a Latin
+  query never finds a Cyrillic tag. Exact matches sort above prefixes above
+  substrings above scattered ones;
 - the highlights carrying the selected tag on the right, grouped by book, in
   reading order, in their own highlight colour, with your comments;
 - a collection box at the top to restrict everything to one project —

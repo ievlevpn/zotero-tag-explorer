@@ -5,6 +5,8 @@ const { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, groupB
 assert.ok(fuzzy("", "anything"));
 assert.ok(fuzzy("mdv", "medieval"));
 assert.ok(!fuzzy("vdm", "medieval"));
+assert.ok(fuzzy("хдг", "хайдеггер"));
+assert.ok(!fuzzy("hdg", "хайдеггер"));   // literal characters: no transliteration
 
 // Exact beats prefix beats substring beats scattered; no match is -1.
 assert.strictEqual(rank("kant", "kant"), 0);

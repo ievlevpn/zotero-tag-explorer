@@ -492,7 +492,12 @@ function startup({ id }) {
 		menus: [{
 			menuType: "menuitem",
 			l10nID: "tag-explorer-collection-menu",
-			onCommand: () => safe(() => openWith(Zotero.getMainWindow().ZoteroPane.getSelectedCollection())),
+			// The row you right-clicked comes in the menu's context.
+			// ZoteroPane.getSelectedCollection() is gone in Zotero 10 — it throws.
+			onCommand: (ev, ctx) => safe(() => {
+				const row = ((ctx && ctx.collectionTreeRows) || [])[0];
+				openWith(row && row.isCollection() ? row.ref : null);
+			}),
 		}],
 	});
 	for (const w of Zotero.getMainWindows()) onMainWindowLoad({ window: w });
