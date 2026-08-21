@@ -9,7 +9,9 @@ A Zotero 7 plugin for reading your own marginalia by tag.
   substrings above scattered ones);
 - the highlights carrying the selected tag on the right, grouped by book, in
   reading order, in their own highlight colour, with your comments;
-- a collection picker at the top to restrict everything to one project —
+- a collection box at the top to restrict everything to one project —
+  fuzzy-searchable over the full path (`phil frank` finds *Philosophy /
+  Frankfurt School*), showing how many highlights each holds,
   sub-collections included;
 - the other tags on a highlight are chips: click one to jump to it;
 - click a highlight to open the reader on it.
@@ -17,7 +19,8 @@ A Zotero 7 plugin for reading your own marginalia by tag.
 Right-clicking a collection in the library offers **Explore Tags in This
 Collection…**, which opens the same window already restricted.
 
-`↓` `↑` `Enter` move through the tag list from the search box. `Esc` closes.
+`↓` `↑` `Enter` move through the tag list from the search box, and through
+the collection list from the collection box. `Esc` closes.
 
 ## Install
 

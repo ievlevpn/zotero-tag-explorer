@@ -1,6 +1,6 @@
 // Self-check for the pure helpers: `node test.js`.
 const assert = require("assert");
-const { fuzzy, rank, tagCounts, matchTags, groupByTitle } = require("./bootstrap.js");
+const { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, groupByTitle } = require("./bootstrap.js");
 
 assert.ok(fuzzy("", "anything"));
 assert.ok(fuzzy("mdv", "medieval"));
@@ -36,6 +36,26 @@ assert.deepStrictEqual(matchTags(counts, "хдг").map((c) => c.tag),
 	["критика Хайдеггера", "Хайдеггер"]);
 assert.strictEqual(matchTags(counts, "kant").length, 0);
 assert.strictEqual(matchTags(counts, "  ").length, 2);   // blank query shows everything
+
+// Collections match on their whole path, and the shallower one wins a tie.
+const colls = [
+	{ id: 1, path: "Philosophy" },
+	{ id: 2, path: "Philosophy / Frankfurt School" },
+	{ id: 3, path: "Physics" },
+];
+assert.deepStrictEqual(matchColls(colls, "phil").map((c) => c.id), [1, 2]);
+assert.deepStrictEqual(matchColls(colls, "frankfurt").map((c) => c.id), [2]);
+assert.deepStrictEqual(matchColls(colls, "phi f sch").map((c) => c.id), [2]);   // scattered
+assert.deepStrictEqual(matchColls(colls, "").map((c) => c.id), [1, 2, 3]);
+assert.strictEqual(matchColls(colls, "chemistry").length, 0);
+
+// A highlight counts towards every collection its book sits in, ancestors included.
+const counted = countByCollection([
+	{ colls: new Set([1, 2]) },
+	{ colls: new Set([1]) },
+	{ colls: new Set() },
+]);
+assert.deepStrictEqual([...counted], [[1, 2], [2, 1]]);
 
 // One block per book, highlights inside it in reading order.
 const books = groupByTitle(list);

@@ -63,13 +63,30 @@ function tagCounts(list) {
 		.sort((a, b) => b.n - a.n || a.tag.localeCompare(b.tag));
 }
 
-function matchTags(tags, query) {
+// Rank a list against a query and drop what doesn't match. `key` says what to
+// search, `tie` orders the equally good.
+function matchBy(list, query, key, tie) {
 	const q = query.trim().toLowerCase();
-	if (!q) return tags;
-	return tags.map((t) => ({ t, r: rank(q, t.tag.toLowerCase()) }))
-		.filter((x) => x.r >= 0)
-		.sort((a, b) => a.r - b.r || b.t.n - a.t.n || a.t.tag.localeCompare(b.t.tag))
-		.map((x) => x.t);
+	if (!q) return list;
+	return list.map((x) => ({ x, r: rank(q, key(x).toLowerCase()) }))
+		.filter((y) => y.r >= 0)
+		.sort((a, b) => a.r - b.r || tie(a.x, b.x))
+		.map((y) => y.x);
+}
+
+const matchTags = (tags, q) =>
+	matchBy(tags, q, (t) => t.tag, (a, b) => b.n - a.n || a.tag.localeCompare(b.tag));
+
+// Collections are searched by their whole path, so "phil frank" finds
+// "Philosophy / Frankfurt School". Shorter paths first: the shallower
+// collection is the one you meant.
+const matchColls = (colls, q) =>
+	matchBy(colls, q, (c) => c.path, (a, b) => a.path.length - b.path.length || a.path.localeCompare(b.path));
+
+function countByCollection(list) {
+	const m = new Map();
+	for (const e of list) for (const id of e.colls) m.set(id, (m.get(id) || 0) + 1);
+	return m;
 }
 
 // Highlights read as a book at a time: same title together, in reading order.
@@ -151,8 +168,16 @@ const CSS = `
 body { margin:0; height:100vh; display:flex; flex-direction:column;
 	font:13px sans-serif; background:Canvas; color:CanvasText; }
 .head { display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid GrayText; }
-.head select { flex:1; min-width:0; font:13px sans-serif; background:Canvas; color:CanvasText;
-	border:1px solid GrayText; border-radius:5px; padding:3px 5px; }
+.pick { position:relative; flex:1; min-width:0; }
+.pick input { width:100%; box-sizing:border-box; font:13px sans-serif; background:Canvas; color:CanvasText;
+	border:1px solid GrayText; border-radius:5px; padding:3px 6px; }
+.drop { position:absolute; top:calc(100% + 3px); left:0; right:0; z-index:9; max-height:60vh; overflow:auto;
+	background:Canvas; border:1px solid GrayText; border-radius:5px; box-shadow:0 4px 12px rgba(0,0,0,.35); }
+.drop .row { display:flex; gap:8px; align-items:baseline; padding:3px 8px; cursor:pointer; }
+.drop .row span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.drop .row b { color:GrayText; font-size:11px; font-weight:400; font-variant-numeric:tabular-nums; }
+.drop .row.on { background:Highlight; color:HighlightText; }
+.drop .row.on b { color:HighlightText; }
 .head button { font:12px sans-serif; padding:3px 10px; border:1px solid GrayText;
 	border-radius:5px; background:transparent; color:CanvasText; cursor:pointer; }
 .head button:hover { background:Highlight; color:HighlightText; }
@@ -213,19 +238,22 @@ function open(collection) {
 	else win.addEventListener("load", go, { once: true });
 }
 
-// Every collection in every library, indented by depth, grouped by library.
-function collectionGroups() {
-	const groups = [];
-	for (const lib of safe(() => Zotero.Libraries.getAll(), [])) {
-		const rows = [];
-		const walk = (c, depth) => {
-			rows.push({ id: c.id, label: "  ".repeat(depth) + c.name });
-			for (const kid of safe(() => c.getChildCollections(), [])) walk(kid, depth + 1);
+// Every collection in every library, flattened depth-first and carrying the
+// path that makes it searchable: "Philosophy / Frankfurt School".
+function flatCollections() {
+	const out = [];
+	const libs = safe(() => Zotero.Libraries.getAll(), []);
+	for (const lib of libs) {
+		const walk = (c, prefix) => {
+			const path = prefix ? prefix + " / " + c.name : c.name;
+			out.push({ id: c.id, path });
+			for (const kid of safe(() => c.getChildCollections(), [])) walk(kid, path);
 		};
-		for (const c of safe(() => Zotero.Collections.getByLibrary(lib.libraryID), [])) walk(c, 0);
-		if (rows.length) groups.push({ name: lib.name, rows });
+		// A library name only earns a place in the path when there are several.
+		const root = libs.length > 1 ? lib.name : "";
+		for (const c of safe(() => Zotero.Collections.getByLibrary(lib.libraryID), [])) walk(c, root);
 	}
-	return groups;
+	return out;
 }
 
 function build(w) {
@@ -244,39 +272,83 @@ function build(w) {
 
 	// head: collection scope, totals, refresh
 	const head = el(doc, "div", "head");
-	const picker = doc.createElement("select");
-	const all = el(doc, "option", null, "All collections");
-	all.value = "";
-	picker.append(all);
-	for (const g of collectionGroups()) {
-		const grp = doc.createElement("optgroup");
-		grp.label = g.name;
-		for (const r of g.rows) {
-			const opt = el(doc, "option", null, r.label);
-			opt.value = String(r.id);
-			grp.append(opt);
-		}
-		picker.append(grp);
-	}
-	picker.value = scope === null ? "" : String(scope);
-	if (picker.value !== (scope === null ? "" : String(scope))) scope = null;  // collection went away
-	picker.addEventListener("change", () => {
-		scope = picker.value ? Number(picker.value) : null;
-		rescope();
-		renderTags();
-		renderHighlights();
-		countLabel.textContent = summary();
-	});
-
-	const summary = () => `${counts.length} tags · ${entries.filter(inScope).length} highlights`;
-	const countLabel = el(doc, "span", "n", summary());
+	const summary = () => `${counts.length} tags \u00B7 ${entries.filter(inScope).length} highlights`;
+	const countLabel = el(doc, "span", "n", "");
 	const refresh = el(doc, "button", null, "Refresh");
 	refresh.addEventListener("click", () => {
 		entries = [];
 		loading = buildIndex().catch(oops).finally(() => { loading = null; });
 		build(w);
 	});
-	head.append(picker, countLabel, refresh);
+
+	// A plain <select> is unusable here: its dropdown is a native popup, and one
+	// does not open inside a chrome about:blank window — the control just sits
+	// there. This is the same search-and-list the tags get, in a box under an input.
+	const colls = flatCollections();
+	const collN = countByCollection(entries);
+	if (scope !== null && !colls.some((c) => c.id === scope)) scope = null;   // collection went away
+
+	const combo = el(doc, "div", "pick");
+	const scopeBox = doc.createElement("input");
+	scopeBox.type = "text";
+	scopeBox.placeholder = "All collections";
+	scopeBox.title = "Restrict everything to one collection";
+	const drop = el(doc, "div", "drop");
+	drop.hidden = true;
+	combo.append(scopeBox, drop);
+	head.append(combo, countLabel, refresh);
+
+	const ALL = { id: null, path: "All collections" };
+	let dropRows = [];
+	let at = 0;
+
+	const scopeLabel = () => (scope === null ? "" : (colls.find((c) => c.id === scope) || ALL).path);
+
+	function paintDrop() {
+		drop.replaceChildren();
+		for (const [i, r] of dropRows.entries()) {
+			const row = el(doc, "div", "row" + (i === at ? " on" : ""));
+			row.append(el(doc, "span", null, r.path),
+				el(doc, "b", null, String(r.id === null ? entries.length : collN.get(r.id) || 0)));
+			// mousedown, not click: the input's blur would have hidden the list first.
+			row.addEventListener("mousedown", (ev) => { ev.preventDefault(); setScope(r.id); scopeBox.blur(); });
+			drop.append(row);
+		}
+		drop.hidden = !dropRows.length;
+	}
+
+	function showDrop() {
+		dropRows = [ALL, ...matchColls(colls, scopeBox.value)].slice(0, 300);
+		at = 0;
+		paintDrop();
+	}
+
+	function setScope(id) {
+		scope = id;
+		scopeBox.value = scopeLabel();
+		drop.hidden = true;
+		rescope();
+		countLabel.textContent = summary();
+		renderTags();
+		renderHighlights();
+	}
+
+	// Focusing empties the box so typing starts a fresh search; leaving without
+	// choosing puts the current collection back.
+	scopeBox.addEventListener("focus", () => { scopeBox.value = ""; showDrop(); });
+	scopeBox.addEventListener("input", showDrop);
+	scopeBox.addEventListener("blur", () => { drop.hidden = true; scopeBox.value = scopeLabel(); });
+	scopeBox.addEventListener("keydown", (ev) => {
+		if (ev.key === "Escape") return scopeBox.blur();
+		if (drop.hidden || !dropRows.length) return;
+		if (ev.key === "Enter") { ev.preventDefault(); setScope(dropRows[at].id); return scopeBox.blur(); }
+		if (ev.key !== "ArrowDown" && ev.key !== "ArrowUp") return;
+		ev.preventDefault();
+		at = Math.max(0, Math.min(dropRows.length - 1, at + (ev.key === "ArrowDown" ? 1 : -1)));
+		paintDrop();
+		const on = drop.querySelector(".row.on");
+		if (on) on.scrollIntoView({ block: "nearest" });
+	});
 
 	// left: search + tag list; right: the highlights
 	const search = doc.createElement("input");
@@ -397,8 +469,7 @@ function build(w) {
 		if (on) on.scrollIntoView({ block: "nearest" });
 	});
 
-	renderTags();
-	renderHighlights();
+	setScope(scope);
 	search.focus();
 }
 
@@ -456,5 +527,5 @@ function uninstall() {}
 
 // node-only: lets test.js import the pure helpers; no-op inside Zotero.
 if (typeof module !== "undefined") {
-	module.exports = { fuzzy, rank, tagCounts, matchTags, groupByTitle };
+	module.exports = { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, groupByTitle };
 }
