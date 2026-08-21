@@ -1,0 +1,18 @@
+{
+  "addons": {
+    "tag-explorer@local": {
+      "updates": [
+        {
+          "version": "0.1.0",
+          "update_link": "https://github.com/ievlevpn/zotero-tag-explorer/releases/download/v0.1.0/tag-explorer.xpi",
+          "applications": {
+            "zotero": {
+              "strict_min_version": "6.999",
+              "strict_max_version": "10.*"
+            }
+          }
+        }
+      ]
+    }
+  }
+}
