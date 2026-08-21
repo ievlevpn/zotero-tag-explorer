@@ -3,12 +3,12 @@
     "tag-explorer@local": {
       "updates": [
         {
-          "version": "0.2.0",
-          "update_link": "https://github.com/ievlevpn/zotero-tag-explorer/releases/download/v0.2.0/tag-explorer.xpi",
+          "version": "0.2.1",
+          "update_link": "https://github.com/ievlevpn/zotero-tag-explorer/releases/download/v0.2.1/tag-explorer.xpi",
           "applications": {
             "zotero": {
-              "strict_min_version": "6.999",
-              "strict_max_version": "10.*"
+              "strict_min_version": "10.0",
+              "strict_max_version": "11.*"
             }
           }
         }
