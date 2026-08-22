@@ -223,6 +223,9 @@ function rescope() {
 // --- the window ------------------------------------------------------------
 
 const CSS = `
+/* The page is built from system colours, and they only follow the app's theme
+ * when the document says it handles both. Zotero's own HTML views do the same. */
+:root { color-scheme: light dark; }
 body { margin:0; height:100vh; display:flex; flex-direction:column;
 	font:13px sans-serif; background:Canvas; color:CanvasText; }
 .head { display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid GrayText; }

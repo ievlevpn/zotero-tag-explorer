@@ -2,6 +2,8 @@
 
 A Zotero 10 plugin for reading your own marginalia by tag.
 
+![Browsing the highlights behind a tag](docs/01-browse.png)
+
 **Tools → Tag Explorer…** opens a window:
 
 - every tag you have put on a highlight, most used first, with a fuzzy search
@@ -29,6 +31,30 @@ Collection…**, which opens the same window already restricted.
 
 `↓` `↑` `Enter` move through the tag list from the search box, and through
 the collection list from the collection box. `Esc` closes.
+
+## What it looks like
+
+Fuzzy search over the tags — `crth` finds *critique of Heidegger*, because your
+letters only have to appear in order:
+
+![Fuzzy tag search](docs/02-search.png)
+
+Restricting everything to one collection, searched the same way over the full
+path, with the number of highlights each one holds:
+
+![Scoping to a collection](docs/03-collections.png)
+
+Renaming a tag in place. Enter hands it to Zotero's own rename, so every item in
+the library that carries the tag moves with it:
+
+![Renaming a tag](docs/04-rename.png)
+
+It follows the system theme:
+
+![Dark mode](docs/05-dark.png)
+
+<sub>Screenshots show invented demo content, not a real library. They are of the
+real interface: `bootstrap.js` is loaded verbatim and draws these pages itself.</sub>
 
 ## Install
 
