@@ -16,6 +16,10 @@ A Zotero 10 plugin for reading your own marginalia by tag.
   the four formats Zotero itself writes, `<i>` `<b>` `<sub>` `<sup>`. Only
   those, in pairs: a highlight reading `< H ≤ 1` is maths, not markup, and
   stays as it is;
+- a filter over the highlights of the selected tag — every word you type has to
+  appear somewhere in the highlight, your comment or the book, in any order, so
+  `decline brown` and `brown decline` both find the same one. `Esc` clears it;
+  it resets whenever you pick a different tag;
 - a collection box at the top to restrict everything to one project —
   fuzzy-searchable over the full path (`phil frank` finds *Philosophy /
   Frankfurt School*), showing how many highlights each holds,
@@ -39,19 +43,24 @@ letters only have to appear in order:
 
 ![Fuzzy tag search](docs/02-search.png)
 
+Narrowing a tag down. `take` has hundreds of highlights; the filter looks in the
+highlight, your comment and the book title at once:
+
+![Filtering inside a tag](docs/03-filter.png)
+
 Restricting everything to one collection, searched the same way over the full
 path, with the number of highlights each one holds:
 
-![Scoping to a collection](docs/03-collections.png)
+![Scoping to a collection](docs/04-collections.png)
 
 Renaming a tag in place. Enter hands it to Zotero's own rename, so every item in
 the library that carries the tag moves with it:
 
-![Renaming a tag](docs/04-rename.png)
+![Renaming a tag](docs/05-rename.png)
 
 It follows the system theme:
 
-![Dark mode](docs/05-dark.png)
+![Dark mode](docs/06-dark.png)
 
 <sub>Screenshots show invented demo content, not a real library. They are of the
 real interface: `bootstrap.js` is loaded verbatim and draws these pages itself.</sub>

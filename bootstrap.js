@@ -135,6 +135,19 @@ function parseMarkup(str) {
 	return root.kids;
 }
 
+// Filtering inside a tag is a different job from finding the tag: a subsequence
+// match over 200 characters of prose matches nearly everything. Plain substrings,
+// every word required, in any order, across the highlight, your comment and the
+// book — so "brown decline" finds it and "decline brown" finds it too.
+function matchText(rows, query) {
+	const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+	if (!words.length) return rows;
+	return rows.filter((r) => {
+		const hay = (r.text + " " + r.comment + " " + r.title).toLowerCase();
+		return words.every((w) => hay.includes(w));
+	});
+}
+
 // Highlights read as a book at a time: same title together, in reading order.
 function groupByTitle(list) {
 	const out = [];
@@ -265,6 +278,10 @@ body { margin:0; height:100vh; display:flex; flex-direction:column;
 .right .title .n { color:GrayText; font-size:11px; white-space:nowrap; }
 .err { color:#c0392b; padding:6px 0; }
 .right .sub { color:GrayText; font-size:11px; margin-bottom:14px; }
+.right .find { display:flex; align-items:center; gap:8px; margin:4px 0 14px; }
+.right .find input { flex:1; min-width:0; max-width:320px; font:12px sans-serif; padding:3px 7px;
+	background:Canvas; color:CanvasText; border:1px solid GrayText; border-radius:5px; }
+.right .find span { color:GrayText; font-size:11px; white-space:nowrap; }
 .book { margin:18px 0 6px; padding-bottom:3px; border-bottom:1px solid GrayText;
 	font-weight:700; display:flex; justify-content:space-between; gap:8px; }
 .book span { color:GrayText; font-weight:400; font-size:11px; white-space:nowrap; }
@@ -431,7 +448,7 @@ function build(w) {
 	scopeBox.addEventListener("input", showDrop);
 	scopeBox.addEventListener("blur", () => { drop.hidden = true; scopeBox.value = scopeLabel(); });
 	scopeBox.addEventListener("keydown", (ev) => {
-		if (ev.key === "Escape") return scopeBox.blur();
+		if (ev.key === "Escape") { ev.stopPropagation(); return scopeBox.blur(); }
 		if (drop.hidden || !dropRows.length) return;
 		if (ev.key === "Enter") { ev.preventDefault(); setScope(dropRows[at].id); return scopeBox.blur(); }
 		if (ev.key !== "ArrowDown" && ev.key !== "ArrowUp") return;
@@ -455,9 +472,11 @@ function build(w) {
 	doc.body.append(head, cols);
 
 	let visible = [];   // the tags currently listed, in order — for the arrow keys
+	let hlQuery = "";   // the filter over the selected tag's highlights
 
 	function pick(tag) {
 		selected = tag;
+		hlQuery = "";
 		renderTags();
 		renderHighlights();
 		right.scrollTop = 0;
@@ -494,16 +513,32 @@ function build(w) {
 		rename.addEventListener("click", () => startRename(title));
 		title.append(el(doc, "h1", null, selected), rename);
 		right.append(title);
-		right.append(el(doc, "div", "sub",
-			`${rows.length} highlight${rows.length === 1 ? "" : "s"}` + (scope ? " in this collection" : "")));
+
+		// Outside paint(), so typing in it never costs it the focus.
+		const bar = el(doc, "div", "find");
+		const filter = doc.createElement("input");
+		filter.type = "text";
+		filter.placeholder = "Filter these highlights\u2026";
+		filter.value = hlQuery;
+		const count = el(doc, "span");
+		bar.append(filter, count);
+		right.append(bar);
 
 		let cap = HL_CAP;
 		const list = el(doc, "div");
 		right.append(list);
+
 		const paint = () => {
+			const shown = matchText(rows, hlQuery);
+			count.textContent = (hlQuery ? `${shown.length} of ${rows.length}` : String(rows.length))
+				+ ` highlight${rows.length === 1 ? "" : "s"}` + (scope ? " in this collection" : "");
 			list.replaceChildren();
+			if (!shown.length) {
+				list.append(el(doc, "div", "empty", "Nothing matches."));
+				return;
+			}
 			let left_ = cap;
-			for (const book of groupByTitle(rows)) {
+			for (const book of groupByTitle(shown)) {
 				if (left_ <= 0) break;
 				const head = el(doc, "div", "book");
 				head.append(marked(doc, "b", null, book.title),
@@ -512,12 +547,24 @@ function build(w) {
 				for (const e of book.rows.slice(0, left_)) list.append(card(e));
 				left_ -= book.rows.length;
 			}
-			if (rows.length > cap) {
-				const more = el(doc, "button", "more", `Show all ${rows.length}`);
-				more.addEventListener("click", () => { cap = rows.length; paint(); });
+			if (shown.length > cap) {
+				const more = el(doc, "button", "more", `Show all ${shown.length}`);
+				more.addEventListener("click", () => { cap = shown.length; paint(); });
 				list.append(more);
 			}
 		};
+
+		filter.addEventListener("input", () => { hlQuery = filter.value; cap = HL_CAP; paint(); });
+		filter.addEventListener("keydown", (ev) => {
+			if (ev.key !== "Escape") return;
+			ev.stopPropagation();          // or the document handler closes the window
+			ev.preventDefault();
+			if (!filter.value) return filter.blur();
+			filter.value = "";
+			hlQuery = "";
+			cap = HL_CAP;
+			paint();
+		});
 		paint();
 	}
 
@@ -533,7 +580,7 @@ function build(w) {
 		const cancel = () => { if (!done) { done = true; renderHighlights(); } };
 		box.addEventListener("blur", cancel);
 		box.addEventListener("keydown", (ev) => {
-			if (ev.key === "Escape") { ev.preventDefault(); return cancel(); }
+			if (ev.key === "Escape") { ev.stopPropagation(); ev.preventDefault(); return cancel(); }
 			if (ev.key !== "Enter") return;
 			ev.preventDefault();
 			done = true;
@@ -674,5 +721,5 @@ function uninstall() {}
 
 // node-only: lets test.js import the pure helpers; no-op inside Zotero.
 if (typeof module !== "undefined") {
-	module.exports = { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, groupByTitle };
+	module.exports = { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, matchText, groupByTitle };
 }

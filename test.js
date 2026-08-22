@@ -1,6 +1,6 @@
 // Self-check for the pure helpers: `node test.js`.
 const assert = require("assert");
-const { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, groupByTitle } = require("./bootstrap.js");
+const { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, matchText, groupByTitle } = require("./bootstrap.js");
 
 assert.ok(fuzzy("", "anything"));
 assert.ok(fuzzy("mdv", "medieval"));
@@ -91,6 +91,23 @@ assert.deepStrictEqual(parseMarkup("</b> alone"), ["</b>", " alone"]);   // clos
 // Malformed but survivable: an unclosed tag just runs to the end.
 assert.deepStrictEqual(parseMarkup("<i>never closed"),
 	[{ tag: "i", kids: ["never closed"] }]);
+
+// Filtering inside a tag: every word must appear, order does not matter, and it
+// looks in the highlight, the comment and the book title alike.
+const hls = [
+	{ text: "Late antiquity is not a twilight but a different noon.", comment: "refuse the language of decline", title: "Brown, Late Antiquity" },
+	{ text: "The Middle Ages did not know itself as an age in the middle.", comment: "periodisation", title: "Le Goff, The Medieval Imagination" },
+	{ text: "", comment: "", title: "Adorno, Negative Dialectics" },
+];
+assert.strictEqual(matchText(hls, "").length, 3);
+assert.strictEqual(matchText(hls, "   ").length, 3);
+assert.deepStrictEqual(matchText(hls, "twilight").map((r) => r.title), ["Brown, Late Antiquity"]);
+assert.deepStrictEqual(matchText(hls, "decline").map((r) => r.title), ["Brown, Late Antiquity"]);  // comment
+assert.deepStrictEqual(matchText(hls, "adorno").map((r) => r.title), ["Adorno, Negative Dialectics"]);  // title
+assert.strictEqual(matchText(hls, "brown decline").length, 1);
+assert.strictEqual(matchText(hls, "decline brown").length, 1);   // order does not matter
+assert.strictEqual(matchText(hls, "MIDDLE ages").length, 1);     // case-insensitive
+assert.strictEqual(matchText(hls, "twilight periodisation").length, 0);  // every word must hit
 
 // One block per book, highlights inside it in reading order.
 const books = groupByTitle(list);
