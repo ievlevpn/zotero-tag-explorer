@@ -32,7 +32,10 @@ A Zotero 10 plugin for reading your own marginalia by tag.
   been — tags, searches and collection scopes alike;
 - **Rename** edits the tag in place and calls Zotero's own rename, so it moves every item
   in the library that carries it — not just these highlights, and not just the
-  collection in scope — keeps the tag's colour and syncs;
+  collection in scope — keeps the tag's colour and syncs. If the name you type is
+  already in use, Zotero would silently merge the two, so the plugin stops and
+  says how many items the other tag is on; merging then takes a second,
+  deliberate click;
 - **appears with** — the tags that share a highlight with this one, strongest
   link first, each one clickable. Your tags already form a graph; this is the
   first thing that shows it to you;

@@ -304,6 +304,8 @@ body { margin:0; height:100vh; display:flex; flex-direction:column;
 .right .title input { flex:1; min-width:0; font:15px sans-serif; font-weight:700; padding:2px 6px;
 	background:Canvas; color:CanvasText; border:1px solid GrayText; border-radius:5px; }
 .right .title .n { color:GrayText; font-size:11px; white-space:nowrap; }
+.right .title .warn { flex:1; min-width:0; color:#c0392b; font-size:11px; }
+@media (prefers-color-scheme: dark) { .right .title .warn { color:#ff8a7a; } }
 .err { color:#c0392b; padding:6px 0; }
 .right .sub { color:GrayText; font-size:11px; margin-bottom:14px; }
 .right .find { display:flex; align-items:center; gap:8px; margin:4px 0 14px; }
@@ -734,12 +736,58 @@ function build(w) {
 		box.select();
 	}
 
+	// How many items already carry `name` in the libraries this rename touches.
+	// The tags table is library-wide and a name can sit in it unused, so the
+	// count comes from what is actually tagged, not from the name existing.
+	async function countTagged(name, libs) {
+		try {
+			const id = Zotero.Tags.getID(name);
+			if (!id) return 0;
+			let n = 0;
+			for (const lib of libs) n += (await Zotero.Tags.getTagItems(lib, id)).length;
+			return n;
+		} catch (e) {
+			oops(e);
+			// Fail towards warning: our own index still knows the highlights.
+			return entries.filter((x) => x.tags.includes(name)).length;
+		}
+	}
+
+	// Renaming onto a name that is already in use is a merge, and Zotero does it
+	// without asking. Say so first, and make it a separate, deliberate click.
+	function warnMerge(tag, next, n) {
+		const title = right.querySelector(".title");
+		if (!title) return;
+		const merge = el(doc, "button", null, "Merge");
+		merge.addEventListener("click", () => doRename(tag, next, true));
+		const cancel = el(doc, "button", null, "Cancel");
+		cancel.addEventListener("click", () => renderHighlights());
+		title.replaceChildren(
+			el(doc, "h1", null, next),
+			el(doc, "span", "warn",
+				`already exists on ${n} item${n === 1 ? "" : "s"}. `
+				+ `Renaming \u201C${tag}\u201D to it merges the two everywhere in the library, `
+				+ `and cannot be undone.`),
+			merge, cancel);
+		title.addEventListener("keydown", (ev) => {
+			if (ev.key !== "Escape") return;
+			ev.stopPropagation();          // or the document handler closes the window
+			ev.preventDefault();
+			renderHighlights();
+		});
+		merge.focus();
+	}
+
 	// Zotero's own rename: every item in the library that carries the tag moves,
 	// the tag's colour follows it, and the change syncs. Which means it is not
 	// limited to annotations, or to the collection currently in scope.
-	async function doRename(tag, next) {
+	async function doRename(tag, next, merging) {
 		if (!next || next === tag) return renderHighlights();
 		const libs = new Set(entries.filter((e) => e.tags.includes(tag)).map((e) => e.libraryID));
+		if (!merging) {
+			const n = await countTagged(next, libs);
+			if (n) return warnMerge(tag, next, n);
+		}
 		try {
 			for (const lib of libs) await Zotero.Tags.rename(lib, tag, next);
 		} catch (e) {
