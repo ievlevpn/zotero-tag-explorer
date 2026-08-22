@@ -24,9 +24,18 @@ A Zotero 10 plugin for reading your own marginalia by tag.
   fuzzy-searchable over the full path (`phil frank` finds *Philosophy /
   Frankfurt School*), showing how many highlights each holds,
   sub-collections included;
+- **search every highlight**, not just one tag's — type in the tag box and take
+  the pinned row at the top of the list. The escape hatch for when you cannot
+  remember which tag you filed something under, and each result carries its own
+  tags, so a hit is also a way back into the tag axis;
+- **`←` `→`** (or `Alt`+arrows) walk back and forward through where you have
+  been — tags, searches and collection scopes alike;
 - **Rename** edits the tag in place and calls Zotero's own rename, so it moves every item
   in the library that carries it — not just these highlights, and not just the
   collection in scope — keeps the tag's colour and syncs;
+- **appears with** — the tags that share a highlight with this one, strongest
+  link first, each one clickable. Your tags already form a graph; this is the
+  first thing that shows it to you;
 - the other tags on a highlight are chips: click one to jump to it;
 - click a highlight to open the reader on it.
 
@@ -48,19 +57,24 @@ highlight, your comment and the book title at once:
 
 ![Filtering inside a tag](docs/03-filter.png)
 
+Searching every highlight in the library, when you cannot recall the tag. Each
+result carries its tags, so any hit is a doorway back into the tag axis:
+
+![Searching every highlight](docs/04-find.png)
+
 Restricting everything to one collection, searched the same way over the full
 path, with the number of highlights each one holds:
 
-![Scoping to a collection](docs/04-collections.png)
+![Scoping to a collection](docs/05-collections.png)
 
 Renaming a tag in place. Enter hands it to Zotero's own rename, so every item in
 the library that carries the tag moves with it:
 
-![Renaming a tag](docs/05-rename.png)
+![Renaming a tag](docs/06-rename.png)
 
 It follows the system theme:
 
-![Dark mode](docs/06-dark.png)
+![Dark mode](docs/07-dark.png)
 
 <sub>Screenshots show invented demo content, not a real library. They are of the
 real interface: `bootstrap.js` is loaded verbatim and draws these pages itself.</sub>

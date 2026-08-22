@@ -24,6 +24,7 @@ let loading = null;       // the in-flight buildIndex(), or null
 let win = null;           // the one explorer window
 let scope = null;         // collection id the view is restricted to, or null
 let selected = null;      // the tag whose highlights are shown
+let finding = null;       // a search over every highlight, instead of a tag
 
 const oops = (e) => Zotero.logError(e);
 
@@ -148,6 +149,20 @@ function matchText(rows, query) {
 	});
 }
 
+// The tags that share a highlight with this one, strongest link first. This is
+// the whole lateral move: your tags already form a graph, nothing has ever
+// shown it to you.
+function neighbours(rows, tag, limit = 14) {
+	const m = new Map();
+	for (const e of rows) {
+		if (!e.tags.includes(tag)) continue;
+		for (const t of e.tags) if (t !== tag) m.set(t, (m.get(t) || 0) + 1);
+	}
+	return [...m].map(([t, n]) => ({ tag: t, n }))
+		.sort((a, b) => b.n - a.n || a.tag.localeCompare(b.tag))
+		.slice(0, limit);
+}
+
 // Highlights read as a book at a time: same title together, in reading order.
 function groupByTitle(list) {
 	const out = [];
@@ -256,6 +271,19 @@ body { margin:0; height:100vh; display:flex; flex-direction:column;
 	border-radius:5px; background:transparent; color:CanvasText; cursor:pointer; }
 .head button:hover { background:Highlight; color:HighlightText; }
 .head .n { color:GrayText; font-size:11px; white-space:nowrap; }
+.head button.step { font:12px sans-serif; padding:3px 8px; min-width:28px; }
+.head button.step:disabled { color:GrayText; border-color:color-mix(in srgb, GrayText 40%, Canvas);
+	cursor:default; background:transparent; }
+.tag.all { color:GrayText; font-style:italic; }
+.tag.all.on { color:HighlightText; }
+.near { display:flex; flex-wrap:wrap; gap:5px; align-items:center; margin:8px 0 2px; }
+.near > span { color:GrayText; font-size:11px; margin-right:2px; }
+.near i { font-style:normal; font-size:12px; border:1px solid GrayText; border-radius:9px;
+	padding:1px 4px 1px 8px; cursor:pointer; display:inline-flex; gap:5px; align-items:center; }
+.near i b { font-weight:400; font-size:10px; color:GrayText; background:color-mix(in srgb, GrayText 20%, Canvas);
+	border-radius:7px; padding:0 5px; }
+.near i:hover { background:Highlight; color:HighlightText; border-color:HighlightText; }
+.near i:hover b { color:HighlightText; }
 .cols { flex:1; min-height:0; display:flex; }
 .left { width:290px; display:flex; flex-direction:column; border-right:1px solid GrayText; }
 .left input { margin:8px; padding:5px 8px; font:13px sans-serif; background:Canvas; color:CanvasText;
@@ -370,7 +398,12 @@ function build(w) {
 	doc.title = "Tag Explorer";
 	doc.head.replaceChildren(el(doc, "style", null, CSS));
 	doc.body.replaceChildren();
-	doc.addEventListener("keydown", (e) => { if (e.key === "Escape") w.close(); });
+	doc.addEventListener("keydown", (e) => {
+		if (e.key === "Escape") return w.close();
+		if (!e.altKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+		e.preventDefault();
+		step(e.key === "ArrowLeft" ? -1 : 1);
+	});
 
 	if (!entries.length && loading) {
 		doc.body.append(el(doc, "div", "empty", "Reading your annotations…"));
@@ -397,6 +430,14 @@ function build(w) {
 	const collN = countByCollection(entries);
 	if (scope !== null && !colls.some((c) => c.id === scope)) scope = null;   // collection went away
 
+	// Wandering is the point, so getting back has to be free.
+	const back = el(doc, "button", "step", "\u2190");
+	const fwd = el(doc, "button", "step", "\u2192");
+	back.title = "Back (Alt+\u2190)";
+	fwd.title = "Forward (Alt+\u2192)";
+	back.addEventListener("click", () => step(-1));
+	fwd.addEventListener("click", () => step(1));
+
 	const combo = el(doc, "div", "pick");
 	const scopeBox = doc.createElement("input");
 	scopeBox.type = "text";
@@ -405,7 +446,7 @@ function build(w) {
 	const drop = el(doc, "div", "drop");
 	drop.hidden = true;
 	combo.append(scopeBox, drop);
-	head.append(combo, countLabel, refresh);
+	head.append(back, fwd, combo, countLabel, refresh);
 
 	const ALL = { id: null, path: "All collections" };
 	let dropRows = [];
@@ -438,6 +479,7 @@ function build(w) {
 		drop.hidden = true;
 		rescope();
 		countLabel.textContent = summary();
+		push();
 		renderTags();
 		renderHighlights();
 	}
@@ -473,18 +515,80 @@ function build(w) {
 
 	let visible = [];   // the tags currently listed, in order — for the arrow keys
 	let hlQuery = "";   // the filter over the selected tag's highlights
+	let trail = [];     // where you have been: { scope, selected, finding, q }
+	let hIndex = -1;
+
+	// --- where you are, and how to get back ---------------------------------
+
+	function paintNav() {
+		back.disabled = hIndex <= 0;
+		fwd.disabled = hIndex >= trail.length - 1;
+	}
+
+	function push() {
+		const now = { scope, selected, finding, q: search.value };
+		const last = trail[hIndex];
+		if (last && last.scope === now.scope && last.selected === now.selected
+			&& last.finding === now.finding) return paintNav();
+		trail = trail.slice(0, hIndex + 1);
+		trail.push(now);
+		hIndex = trail.length - 1;
+		paintNav();
+	}
+
+	function step(d) {
+		const next = hIndex + d;
+		if (next < 0 || next >= trail.length) return;
+		hIndex = next;
+		const was = trail[hIndex];
+		scope = was.scope;
+		selected = was.selected;
+		finding = was.finding;
+		search.value = was.q;
+		hlQuery = "";
+		scopeBox.value = scopeLabel();
+		rescope();
+		countLabel.textContent = summary();
+		renderTags();
+		renderHighlights();
+		paintNav();
+	}
 
 	function pick(tag) {
 		selected = tag;
+		finding = null;
 		hlQuery = "";
+		push();
 		renderTags();
 		renderHighlights();
 		right.scrollTop = 0;
 	}
 
+	function find(query) {
+		finding = query;
+		selected = null;
+		hlQuery = "";
+		push();
+		renderTags();
+		renderHighlights();
+		right.scrollTop = 0;
+	}
+
+	// --- the tag list --------------------------------------------------------
+
 	function renderTags() {
+		const q = search.value.trim();
 		visible = matchTags(counts, search.value);
 		tags.replaceChildren();
+		// Pinned above the matches, and deliberately not part of them: the tag
+		// vocabulary is not the only way in, and when most tags have been used
+		// once it is often not the way at all.
+		if (q) {
+			const row = el(doc, "div", "tag all" + (finding === q ? " on" : ""));
+			row.append(el(doc, "span", null, `Search every highlight for \u201C${q}\u201D`));
+			row.addEventListener("click", () => find(q));
+			tags.append(row);
+		}
 		if (!visible.length) {
 			tags.append(el(doc, "div", "empty", counts.length ? "No tags match." : "No tagged highlights here."));
 			return;
@@ -500,13 +604,49 @@ function build(w) {
 		}
 	}
 
+	// --- the highlights ------------------------------------------------------
+
+	// One grouped, capped list of cards, repaintable in place so that typing in
+	// a filter never rebuilds the box you are typing into.
+	function listOf(rows) {
+		let cap = HL_CAP;
+		const list = el(doc, "div");
+		const paint = () => {
+			list.replaceChildren();
+			if (!rows.length) {
+				list.append(el(doc, "div", "empty", "Nothing matches."));
+				return;
+			}
+			let room = cap;
+			for (const book of groupByTitle(rows)) {
+				if (room <= 0) break;
+				const head = el(doc, "div", "book");
+				head.append(marked(doc, "b", null, book.title),
+					el(doc, "span", null, `${book.rows.length}`));
+				list.append(head);
+				for (const e of book.rows.slice(0, room)) list.append(card(e));
+				room -= book.rows.length;
+			}
+			if (rows.length > cap) {
+				const more = el(doc, "button", "more", `Show all ${rows.length}`);
+				more.addEventListener("click", () => { cap = rows.length; paint(); });
+				list.append(more);
+			}
+		};
+		paint();
+		return { list, show: (next) => { rows = next; cap = HL_CAP; paint(); } };
+	}
+
 	function renderHighlights() {
 		right.replaceChildren();
+		if (finding) return renderFound();
 		if (!selected) {
-			right.append(el(doc, "div", "empty", "Pick a tag."));
+			right.append(el(doc, "div", "empty", "Pick a tag, or search every highlight."));
 			return;
 		}
-		const rows = entries.filter((e) => inScope(e) && e.tags.includes(selected));
+		const scoped = entries.filter(inScope);
+		const rows = scoped.filter((e) => e.tags.includes(selected));
+
 		const title = el(doc, "div", "title");
 		const rename = el(doc, "button", null, "Rename");
 		rename.title = "Rename this tag everywhere it is used";
@@ -514,7 +654,20 @@ function build(w) {
 		title.append(el(doc, "h1", null, selected), rename);
 		right.append(title);
 
-		// Outside paint(), so typing in it never costs it the focus.
+		const near = neighbours(scoped, selected);
+		if (near.length) {
+			const strip = el(doc, "div", "near");
+			strip.append(el(doc, "span", null, "appears with"));
+			for (const n of near) {
+				const chip = el(doc, "i", null, n.tag);
+				chip.append(el(doc, "b", null, String(n.n)));
+				chip.title = `${n.n} highlight${n.n === 1 ? "" : "s"} carry both`;
+				chip.addEventListener("click", () => { search.value = ""; pick(n.tag); });
+				strip.append(chip);
+			}
+			right.append(strip);
+		}
+
 		const bar = el(doc, "div", "find");
 		const filter = doc.createElement("input");
 		filter.type = "text";
@@ -524,37 +677,18 @@ function build(w) {
 		bar.append(filter, count);
 		right.append(bar);
 
-		let cap = HL_CAP;
-		const list = el(doc, "div");
-		right.append(list);
+		const view = listOf(matchText(rows, hlQuery));
+		right.append(view.list);
 
-		const paint = () => {
+		const sync = () => {
 			const shown = matchText(rows, hlQuery);
 			count.textContent = (hlQuery ? `${shown.length} of ${rows.length}` : String(rows.length))
 				+ ` highlight${rows.length === 1 ? "" : "s"}` + (scope ? " in this collection" : "");
-			list.replaceChildren();
-			if (!shown.length) {
-				list.append(el(doc, "div", "empty", "Nothing matches."));
-				return;
-			}
-			let left_ = cap;
-			for (const book of groupByTitle(shown)) {
-				if (left_ <= 0) break;
-				const head = el(doc, "div", "book");
-				head.append(marked(doc, "b", null, book.title),
-					el(doc, "span", null, `${book.rows.length}`));
-				list.append(head);
-				for (const e of book.rows.slice(0, left_)) list.append(card(e));
-				left_ -= book.rows.length;
-			}
-			if (shown.length > cap) {
-				const more = el(doc, "button", "more", `Show all ${shown.length}`);
-				more.addEventListener("click", () => { cap = shown.length; paint(); });
-				list.append(more);
-			}
+			view.show(shown);
 		};
+		sync();
 
-		filter.addEventListener("input", () => { hlQuery = filter.value; cap = HL_CAP; paint(); });
+		filter.addEventListener("input", () => { hlQuery = filter.value; sync(); });
 		filter.addEventListener("keydown", (ev) => {
 			if (ev.key !== "Escape") return;
 			ev.stopPropagation();          // or the document handler closes the window
@@ -562,15 +696,23 @@ function build(w) {
 			if (!filter.value) return filter.blur();
 			filter.value = "";
 			hlQuery = "";
-			cap = HL_CAP;
-			paint();
+			sync();
 		});
-		paint();
 	}
 
-	// Edited in place rather than in a prompt. A modal spins a nested event loop
-	// and, parented to this window, its sheet can end up behind the main window
-	// where nobody can answer it — which looks exactly like Zotero freezing.
+	// Every highlight, not just one tag's. The cards carry their tags, so a hit
+	// is also a way into the tag that would have found it.
+	function renderFound() {
+		const rows = matchText(entries.filter(inScope), finding);
+		const title = el(doc, "div", "title");
+		title.append(el(doc, "h1", null, `\u201C${finding}\u201D`));
+		right.append(title);
+		right.append(el(doc, "div", "sub",
+			`${rows.length} highlight${rows.length === 1 ? "" : "s"} anywhere in your library`
+			+ (scope ? ", in this collection" : "")));
+		right.append(listOf(rows).list);
+	}
+
 	function startRename(title) {
 		const tag = selected;
 		const box = doc.createElement("input");
@@ -607,6 +749,7 @@ function build(w) {
 		}
 		renameInList(entries, tag, next, libs);
 		selected = next;
+		for (const t of trail) if (t.selected === tag) t.selected = next;
 		rescope();
 		countLabel.textContent = summary();
 		renderTags();
@@ -721,5 +864,5 @@ function uninstall() {}
 
 // node-only: lets test.js import the pure helpers; no-op inside Zotero.
 if (typeof module !== "undefined") {
-	module.exports = { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, matchText, groupByTitle };
+	module.exports = { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, matchText, neighbours, groupByTitle };
 }

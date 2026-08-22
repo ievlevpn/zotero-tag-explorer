@@ -1,6 +1,6 @@
 // Self-check for the pure helpers: `node test.js`.
 const assert = require("assert");
-const { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, matchText, groupByTitle } = require("./bootstrap.js");
+const { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, matchText, neighbours, groupByTitle } = require("./bootstrap.js");
 
 assert.ok(fuzzy("", "anything"));
 assert.ok(fuzzy("mdv", "medieval"));
@@ -108,6 +108,20 @@ assert.strictEqual(matchText(hls, "brown decline").length, 1);
 assert.strictEqual(matchText(hls, "decline brown").length, 1);   // order does not matter
 assert.strictEqual(matchText(hls, "MIDDLE ages").length, 1);     // case-insensitive
 assert.strictEqual(matchText(hls, "twilight periodisation").length, 0);  // every word must hit
+
+// The tag graph: who shares a highlight with whom, strongest link first.
+const graph = [
+	{ tags: ["Arendt", "labour", "work"] },
+	{ tags: ["Arendt", "labour"] },
+	{ tags: ["Arendt", "the public realm"] },
+	{ tags: ["Weber", "iron cage"] },
+];
+assert.deepStrictEqual(neighbours(graph, "Arendt"),
+	[{ tag: "labour", n: 2 }, { tag: "the public realm", n: 1 }, { tag: "work", n: 1 }]);
+assert.deepStrictEqual(neighbours(graph, "Weber"), [{ tag: "iron cage", n: 1 }]);
+assert.deepStrictEqual(neighbours(graph, "iron cage"), [{ tag: "Weber", n: 1 }]);
+assert.deepStrictEqual(neighbours(graph, "nobody"), []);          // a tag with no company
+assert.strictEqual(neighbours(graph, "Arendt", 1).length, 1);     // honours the limit
 
 // One block per book, highlights inside it in reading order.
 const books = groupByTitle(list);
