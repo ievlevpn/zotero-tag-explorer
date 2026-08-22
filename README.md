@@ -10,7 +10,10 @@ A Zotero 10 plugin for reading your own marginalia by tag.
   is literal and case-insensitive. Exact matches sort above prefixes above
   substrings above scattered ones;
 - the highlights carrying the selected tag on the right, grouped by book, in
-  reading order, in their own highlight colour, with your comments;
+  reading order, in their own highlight colour, with your comments — rendering
+  the four formats Zotero itself writes, `<i>` `<b>` `<sub>` `<sup>`. Only
+  those, in pairs: a highlight reading `< H ≤ 1` is maths, not markup, and
+  stays as it is;
 - a collection box at the top to restrict everything to one project —
   fuzzy-searchable over the full path (`phil frank` finds *Philosophy /
   Frankfurt School*), showing how many highlights each holds,

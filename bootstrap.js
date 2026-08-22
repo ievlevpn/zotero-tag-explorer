@@ -113,6 +113,37 @@ function renameInList(list, oldName, newName, libs) {
 	return list;
 }
 
+// Zotero's reader writes exactly four formats into annotation text, comments
+// and item fields. Nothing else is markup: highlights are full of maths like
+// "< H \u2264 1" and "<\u2026>", and a real HTML parser would swallow it. So only
+// these tags, in pairs, are ever taken as markup — a lone "</b>" stays text.
+const MARKUP = /<(\/?)(b|i|sub|sup)>/gi;
+
+// -> a tree of strings and { tag, kids }, which markup() turns into elements.
+function parseMarkup(str) {
+	const root = { tag: null, kids: [] };
+	const stack = [root];
+	const put = (x) => { if (x) stack[stack.length - 1].kids.push(x); };
+	let last = 0;
+	for (const m of str.matchAll(MARKUP)) {
+		put(str.slice(last, m.index));
+		last = m.index + m[0].length;
+		const tag = m[2].toLowerCase();
+		if (!m[1]) {
+			const node = { tag, kids: [] };
+			put(node);
+			stack.push(node);
+		} else {
+			let at = -1;
+			for (let i = stack.length - 1; i > 0; i--) if (stack[i].tag === tag) { at = i; break; }
+			if (at < 0) put(m[0]);      // a closer with nothing open: literal text
+			else stack.length = at;     // closes it, and anything left open inside it
+		}
+	}
+	put(str.slice(last));
+	return root.kids;
+}
+
 // Highlights read as a book at a time: same title together, in reading order.
 function groupByTitle(list) {
 	const out = [];
@@ -233,7 +264,7 @@ body { margin:0; height:100vh; display:flex; flex-direction:column;
 .hl:hover { background:color-mix(in srgb, var(--c) 22%, Canvas); }
 .hl .t { white-space:pre-wrap; }
 .hl .c { white-space:pre-wrap; margin-top:5px; padding-left:8px; border-left:2px solid GrayText;
-	color:CanvasText; font-style:italic; }
+	color:CanvasText; }
 .hl .m { margin-top:5px; color:GrayText; font-size:11px; display:flex; flex-wrap:wrap; gap:5px; align-items:center; }
 .hl .m i { font-style:normal; border:1px solid GrayText; border-radius:9px; padding:0 6px; cursor:pointer; }
 .hl .m i:hover { background:Highlight; color:HighlightText; }
@@ -247,6 +278,29 @@ function el(doc, tag, cls, text) {
 	if (cls) n.className = cls;
 	if (text != null) n.textContent = text;
 	return n;
+}
+
+// The tag names come from MARKUP's whitelist, so this cannot build anything but
+// b/i/sub/sup — no innerHTML, nothing else gets through.
+function markup(doc, str) {
+	const frag = doc.createDocumentFragment();
+	const put = (nodes, into) => {
+		for (const n of nodes) {
+			if (typeof n === "string") { into.append(n); continue; }
+			const box = doc.createElement(n.tag);
+			put(n.kids, box);
+			into.append(box);
+		}
+	};
+	put(parseMarkup(str), frag);
+	return frag;
+}
+
+// Same, as a fresh element.
+function marked(doc, tag, cls, str) {
+	const node = el(doc, tag, cls);
+	node.append(markup(doc, str));
+	return node;
 }
 
 function open(collection) {
@@ -443,7 +497,7 @@ function build(w) {
 			for (const book of groupByTitle(rows)) {
 				if (left_ <= 0) break;
 				const head = el(doc, "div", "book");
-				head.append(el(doc, "b", null, book.title),
+				head.append(marked(doc, "b", null, book.title),
 					el(doc, "span", null, `${book.rows.length}`));
 				list.append(head);
 				for (const e of book.rows.slice(0, left_)) list.append(card(e));
@@ -485,9 +539,9 @@ function build(w) {
 		const box = el(doc, "div", "hl");
 		box.style.setProperty("--c", e.color);
 		box.title = "Open in the reader";
-		if (e.text) box.append(el(doc, "div", "t", e.text));
+		if (e.text) box.append(marked(doc, "div", "t", e.text));
 		else box.append(el(doc, "div", "t", `[${e.type}]`));
-		if (e.comment) box.append(el(doc, "div", "c", e.comment));
+		if (e.comment) box.append(marked(doc, "div", "c", e.comment));
 
 		const meta = el(doc, "div", "m");
 		if (e.page) meta.append(el(doc, "span", null, "p. " + e.page));
@@ -589,5 +643,5 @@ function uninstall() {}
 
 // node-only: lets test.js import the pure helpers; no-op inside Zotero.
 if (typeof module !== "undefined") {
-	module.exports = { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, groupByTitle };
+	module.exports = { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, groupByTitle };
 }

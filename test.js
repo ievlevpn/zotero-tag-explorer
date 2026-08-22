@@ -1,6 +1,6 @@
 // Self-check for the pure helpers: `node test.js`.
 const assert = require("assert");
-const { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, groupByTitle } = require("./bootstrap.js");
+const { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, groupByTitle } = require("./bootstrap.js");
 
 assert.ok(fuzzy("", "anything"));
 assert.ok(fuzzy("mdv", "medieval"));
@@ -71,6 +71,26 @@ assert.deepStrictEqual(renameInList(before, "take", "ref", new Set([1])), [
 	{ libraryID: 1, tags: ["цитата", "ref"] },
 	{ libraryID: 2, tags: ["take"] },
 ]);
+
+// The four formats Zotero writes become nodes; everything else stays text.
+assert.deepStrictEqual(parseMarkup("plain"), ["plain"]);
+assert.deepStrictEqual(parseMarkup("a <b>bold</b> c"),
+	["a ", { tag: "b", kids: ["bold"] }, " c"]);
+assert.deepStrictEqual(parseMarkup("x<sub>1</sub><sup>2</sup>"),
+	["x", { tag: "sub", kids: ["1"] }, { tag: "sup", kids: ["2"] }]);
+assert.deepStrictEqual(parseMarkup("<b>outer <i>both</i></b>"),
+	[{ tag: "b", kids: ["outer ", { tag: "i", kids: ["both"] }] }]);
+
+// Maths, not markup: highlights are full of stray angle brackets.
+assert.deepStrictEqual(parseMarkup("< H \u2264 1"), ["< H \u2264 1"]);
+assert.deepStrictEqual(parseMarkup("<\u2026> \u043c\u0438\u0440"), ["<\u2026> \u043c\u0438\u0440"]);
+assert.deepStrictEqual(parseMarkup("<p)=<p(x"), ["<p)=<p(x"]);
+assert.deepStrictEqual(parseMarkup("<1>-'"), ["<1>-'"]);
+assert.deepStrictEqual(parseMarkup("</b> alone"), ["</b>", " alone"]);   // closer with nothing open
+
+// Malformed but survivable: an unclosed tag just runs to the end.
+assert.deepStrictEqual(parseMarkup("<i>never closed"),
+	[{ tag: "i", kids: ["never closed"] }]);
 
 // One block per book, highlights inside it in reading order.
 const books = groupByTitle(list);
