@@ -162,22 +162,33 @@ function collectionsOf(item) {
 	return out;
 }
 
+// Zotero inlines these ids into the SQL it runs, and Zotero.DB writes every
+// statement to the debug log in full. Ten thousand ids in one statement is a
+// 58 KB line, and the debug viewer lays out one paragraph per line with no
+// byte limit — enough to hang Zotero the moment you open it. Small statements
+// instead, which also lets the event loop breathe between them.
+const CHUNK = 500;
+
+async function loadItems(ids, dataTypes) {
+	const out = [];
+	for (let i = 0; i < ids.length; i += CHUNK) {
+		const part = (await Zotero.Items.getAsync(ids.slice(i, i + CHUNK))).filter(Boolean);
+		await Zotero.Items.loadDataTypes(part, dataTypes);
+		out.push(...part);
+	}
+	return out;
+}
+
 // One row per tagged annotation. The SQL only picks the ids — going through
 // the item API for everything else keeps this out of Zotero's schema.
 async function buildIndex() {
 	const ids = await Zotero.DB.columnQueryAsync(
 		"SELECT DISTINCT a.itemID FROM itemAnnotations a JOIN itemTags t ON t.itemID = a.itemID");
-	const anns = (await Zotero.Items.getAsync(ids)).filter((a) => a && !a.deleted);
-	await Zotero.Items.loadDataTypes(anns, ["annotation", "tags"]);
+	const anns = (await loadItems(ids, ["annotation", "tags"])).filter((a) => !a.deleted);
 
-	// The attachment holds the annotation; its parent is the book. Load both in
-	// bulk — one round trip beats ten thousand lazy ones.
-	const parents = await Zotero.Items.getAsync(
-		[...new Set(anns.map((a) => a.parentID).filter(Boolean))]);
-	await Zotero.Items.loadDataTypes(parents);
-	const tops = await Zotero.Items.getAsync(
-		[...new Set(parents.map((p) => p.parentID).filter(Boolean))]);
-	await Zotero.Items.loadDataTypes(tops);
+	// The attachment holds the annotation; its parent is the book.
+	const parents = await loadItems([...new Set(anns.map((a) => a.parentID).filter(Boolean))]);
+	const tops = await loadItems([...new Set(parents.map((p) => p.parentID).filter(Boolean))]);
 
 	const collsOf = new Map();   // top item id → its collections, worked out once
 	const out = [];

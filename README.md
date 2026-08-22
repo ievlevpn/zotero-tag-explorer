@@ -49,7 +49,7 @@ a release (bump `version` in `manifest.json` first).
 
 Nothing is stored. Opening the window reads every tagged annotation in every
 library into one array (one SQL query for the ids, the Zotero item API for
-everything else) and each view is a scan over it. About ten thousand tagged
+everything else, 500 items at a time) and each view is a scan over it. About ten thousand tagged
 highlights load in a second or so and every keystroke after that is instant.
 The index is built once per session — **Refresh** rebuilds it after you tag
 something new.
