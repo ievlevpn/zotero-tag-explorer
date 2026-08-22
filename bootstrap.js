@@ -31,15 +31,6 @@ function safe(fn, fallback) {
 	try { return fn(); } catch (e) { oops(e); return fallback; }
 }
 
-// A parentless modal can end up invisible and block the app from ever quitting,
-// so it is always anchored to a window. Returns null on cancel.
-function promptValue(parent, text, initial) {
-	if (!parent) return null;
-	return safe(() => {
-		const out = { value: initial };
-		return Services.prompt.prompt(parent, "Tag Explorer", text, out, null, {}) ? out.value : null;
-	}, null);
-}
 
 // --- pure helpers (test.js checks these) -----------------------------------
 
@@ -255,6 +246,10 @@ body { margin:0; height:100vh; display:flex; flex-direction:column;
 .right .title button { font:11px sans-serif; padding:2px 8px; border:1px solid GrayText;
 	border-radius:5px; background:transparent; color:CanvasText; cursor:pointer; white-space:nowrap; }
 .right .title button:hover { background:Highlight; color:HighlightText; }
+.right .title input { flex:1; min-width:0; font:15px sans-serif; font-weight:700; padding:2px 6px;
+	background:Canvas; color:CanvasText; border:1px solid GrayText; border-radius:5px; }
+.right .title .n { color:GrayText; font-size:11px; white-space:nowrap; }
+.err { color:#c0392b; padding:6px 0; }
 .right .sub { color:GrayText; font-size:11px; margin-bottom:14px; }
 .book { margin:18px 0 6px; padding-bottom:3px; border-bottom:1px solid GrayText;
 	font-weight:700; display:flex; justify-content:space-between; gap:8px; }
@@ -482,7 +477,7 @@ function build(w) {
 		const title = el(doc, "div", "title");
 		const rename = el(doc, "button", null, "Rename");
 		rename.title = "Rename this tag everywhere it is used";
-		rename.addEventListener("click", () => doRename(selected));
+		rename.addEventListener("click", () => startRename(title));
 		title.append(el(doc, "h1", null, selected), rename);
 		right.append(title);
 		right.append(el(doc, "div", "sub",
@@ -512,20 +507,42 @@ function build(w) {
 		paint();
 	}
 
+	// Edited in place rather than in a prompt. A modal spins a nested event loop
+	// and, parented to this window, its sheet can end up behind the main window
+	// where nobody can answer it — which looks exactly like Zotero freezing.
+	function startRename(title) {
+		const tag = selected;
+		const box = doc.createElement("input");
+		box.type = "text";
+		box.value = tag;
+		let done = false;
+		const cancel = () => { if (!done) { done = true; renderHighlights(); } };
+		box.addEventListener("blur", cancel);
+		box.addEventListener("keydown", (ev) => {
+			if (ev.key === "Escape") { ev.preventDefault(); return cancel(); }
+			if (ev.key !== "Enter") return;
+			ev.preventDefault();
+			done = true;
+			doRename(tag, box.value.trim());
+		});
+		title.replaceChildren(box, el(doc, "span", "n",
+			"Enter renames it everywhere in the library \u00B7 Esc cancels"));
+		box.focus();
+		box.select();
+	}
+
 	// Zotero's own rename: every item in the library that carries the tag moves,
 	// the tag's colour follows it, and the change syncs. Which means it is not
 	// limited to annotations, or to the collection currently in scope.
-	async function doRename(tag) {
-		const next = (promptValue(w,
-			`Rename "${tag}" everywhere it is used — every item in the library, not just these highlights.\n\nNew name:`,
-			tag) || "").trim();
-		if (!next || next === tag) return;
+	async function doRename(tag, next) {
+		if (!next || next === tag) return renderHighlights();
 		const libs = new Set(entries.filter((e) => e.tags.includes(tag)).map((e) => e.libraryID));
 		try {
 			for (const lib of libs) await Zotero.Tags.rename(lib, tag, next);
 		} catch (e) {
 			oops(e);
-			return safe(() => Services.prompt.alert(w, "Tag Explorer", `Could not rename the tag: ${e.message}`));
+			renderHighlights();
+			return right.prepend(el(doc, "div", "err", `Could not rename: ${e.message}`));
 		}
 		renameInList(entries, tag, next, libs);
 		selected = next;
