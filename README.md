@@ -41,8 +41,11 @@ A Zotero 10 plugin for reading your own marginalia by tag.
   author as well as title. A book shows its own tag profile, then **related
   books** — the ones it shares the most tags with, which is how you find out
   that two things you read a year apart were the same project — then its
-  highlights in reading order. Related books fold away by default, with their
-  count on the header, and stay as you left them from book to book;
+  highlights in reading order. Clicking one of a book's tags narrows the book to
+  it rather than leaving — click it again to widen back out, or take the *see
+  “…” across all books* button to go to the tag itself. Related books fold away
+  by default, with their count on the header, and stay as you left them from
+  book to book;
 - a **die** beside the search box rolls a random tag, or a random book. Two thirds of the tags in
   a well-used library have been used exactly once, which puts them past the end
   of every sorted list; this is the only thing that ever surfaces them. It draws

@@ -300,7 +300,13 @@ function rescope() {
 	if (!view) return;
 	// A view that the new scope has emptied is not a view any more.
 	if (view.kind === "tag" && !counts.some((c) => c.tag === view.value)) view = null;
-	if (view.kind === "book" && !entries.some((e) => inScope(e) && e.book === view.value)) view = null;
+	if (view.kind === "book") {
+		const rows = entries.filter((e) => inScope(e) && e.book === view.value);
+		if (!rows.length) view = null;
+		else if (view.tag && !rows.some((e) => e.tags.includes(view.tag))) {
+			view = { kind: "book", value: view.value };
+		}
+	}
 }
 
 // --- the window ------------------------------------------------------------
@@ -339,6 +345,11 @@ body { margin:0; height:100vh; display:flex; flex-direction:column;
 	border-radius:7px; padding:0 5px; }
 .near i:hover { background:Highlight; color:HighlightText; border-color:HighlightText; }
 .near i:hover b { color:HighlightText; }
+.near i.on { background:Highlight; color:HighlightText; border-color:HighlightText; }
+.near i.on b { color:HighlightText; }
+.near button.out { font:11px sans-serif; padding:1px 8px; border:1px solid GrayText;
+	border-radius:9px; background:transparent; color:GrayText; cursor:pointer; }
+.near button.out:hover { background:Highlight; color:HighlightText; border-color:HighlightText; }
 .cols { flex:1; min-height:0; display:flex; }
 .left { width:290px; display:flex; flex-direction:column; border-right:1px solid GrayText; }
 .axis { display:flex; margin:8px 8px 0; border:1px solid GrayText; border-radius:5px; overflow:hidden; }
@@ -349,7 +360,7 @@ body { margin:0; height:100vh; display:flex; flex-direction:column;
 .nm { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .nm i.who { font-style:normal; color:GrayText; }
 .tag.on .nm i.who { color:HighlightText; }
-.book .nm { font-weight:700; cursor:pointer; }
+.book .nm { color:CanvasText; font-size:13px; font-weight:700; cursor:pointer; }
 .book .nm:hover { text-decoration:underline; }
 .rel { margin:10px 0 2px; }
 .relh { display:flex; gap:6px; align-items:center; color:GrayText; font-size:11px;
@@ -394,7 +405,7 @@ body { margin:0; height:100vh; display:flex; flex-direction:column;
 .right .find span { color:GrayText; font-size:11px; white-space:nowrap; }
 .book { margin:18px 0 6px; padding-bottom:3px; border-bottom:1px solid GrayText;
 	font-weight:700; display:flex; justify-content:space-between; gap:8px; }
-.book span { color:GrayText; font-weight:400; font-size:11px; white-space:nowrap; }
+.book .n { color:GrayText; font-weight:400; font-size:11px; white-space:nowrap; }
 .hl { border-left:4px solid var(--c); padding:5px 8px; margin:6px 0; border-radius:0 4px 4px 0;
 	cursor:pointer; background:color-mix(in srgb, var(--c) 10%, Canvas); }
 .hl:hover { background:color-mix(in srgb, var(--c) 22%, Canvas); }
@@ -646,6 +657,10 @@ function build(w) {
 	let hIndex = -1;
 
 	const isTag = (t) => !!view && view.kind === "tag" && view.value === t;
+	// The tag currently doing the narrowing, whichever axis you are on.
+	const activeTag = () => (!view ? null
+		: view.kind === "tag" ? view.value
+		: view.kind === "book" ? (view.tag || null) : null);
 	const isBook = (b) => !!view && view.kind === "book" && view.value === b;
 
 	// --- where you are, and how to get back ---------------------------------
@@ -655,7 +670,9 @@ function build(w) {
 		fwd.disabled = hIndex >= trail.length - 1;
 	}
 
-	const same = (a, b) => (!a && !b) || (!!a && !!b && a.kind === b.kind && a.value === b.value);
+	const same = (a, b) => (!a && !b)
+		|| (!!a && !!b && a.kind === b.kind && a.value === b.value
+			&& (a.tag || null) === (b.tag || null));
 
 	function push() {
 		const now = { scope, axis, view, q: search.value };
@@ -706,6 +723,12 @@ function build(w) {
 	// Arriving from somewhere else — a chip, a related book — means landing on
 	// the other axis with a clean search box.
 	function jumpToTag(tag) { axis = "tags"; search.value = ""; pickTag(tag); }
+
+	// Within a book, picking a tag narrows this book rather than leaving it —
+	// clicking the same one again widens back out.
+	const narrow = (tag) =>
+		show({ kind: "book", value: view.value, tag: view.tag === tag ? null : tag });
+	const chipPick = (tag) => (view && view.kind === "book" ? narrow(tag) : jumpToTag(tag));
 	function jumpToBook(book) { axis = "books"; search.value = ""; pickBook(book); }
 
 	function setAxis(id) {
@@ -807,7 +830,7 @@ function build(w) {
 					const name = bookName(book);
 					name.title = "Show this book";
 					name.addEventListener("click", () => jumpToBook(book.book));
-					head.append(name, el(doc, "span", null, `${book.rows.length}`));
+					head.append(name, el(doc, "span", "n", `${book.rows.length}`));
 					list.append(head);
 					for (const e of book.rows.slice(0, room)) list.append(card(e));
 					room -= book.rows.length;
@@ -860,7 +883,7 @@ function build(w) {
 		const strip = el(doc, "div", "near");
 		strip.append(el(doc, "span", null, label));
 		for (const it of items) {
-			const chip = el(doc, "i", null, it.tag);
+			const chip = el(doc, "i", activeTag() === it.tag ? "on" : null, it.tag);
 			chip.append(el(doc, "b", null, String(it.n)));
 			chip.addEventListener("click", () => onPick(it.tag));
 			strip.append(chip);
@@ -911,10 +934,19 @@ function build(w) {
 		right.append(title);
 		if (b.creator) right.append(el(doc, "div", "sub", b.creator));
 
+		const picked = view.tag || null;
 		const mine = tagCounts(rows);
 		if (mine.length) {
-			right.append(chips("tagged", mine.slice(0, BOOK_TAGS), jumpToTag,
-				mine.length > BOOK_TAGS ? `+${mine.length - BOOK_TAGS} more` : null));
+			const strip = chips("tagged", mine.slice(0, BOOK_TAGS), narrow,
+				mine.length > BOOK_TAGS ? `+${mine.length - BOOK_TAGS} more` : null);
+			// Narrowing keeps you in the book, so offer the door out explicitly
+			// rather than making every chip click take it.
+			if (picked) {
+				const out = el(doc, "button", "out", `see \u201C${picked}\u201D across all books`);
+				out.addEventListener("click", () => jumpToTag(picked));
+				strip.append(out);
+			}
+			right.append(strip);
 		}
 
 		// Folded by default: the reading pane is for reading, and eight titles
@@ -946,7 +978,7 @@ function build(w) {
 			right.append(box);
 		}
 
-		right.append(...filtered(rows, true));
+		right.append(...filtered(picked ? rows.filter((e) => e.tags.includes(picked)) : rows, true));
 	}
 
 	// Every highlight, not just one tag's. The cards carry their tags, so a hit
@@ -1062,10 +1094,10 @@ function build(w) {
 		const meta = el(doc, "div", "m");
 		if (e.page) meta.append(el(doc, "span", null, "p. " + e.page));
 		for (const t of e.tags) {
-			if (isTag(t)) continue;
+			if (t === activeTag()) continue;
 			const chip = el(doc, "i", null, t);
-			chip.title = "Show this tag";
-			chip.addEventListener("click", (ev) => { ev.stopPropagation(); jumpToTag(t); });
+			chip.title = view && view.kind === "book" ? "Show only this tag in this book" : "Show this tag";
+			chip.addEventListener("click", (ev) => { ev.stopPropagation(); chipPick(t); });
 			meta.append(chip);
 		}
 		if (meta.childNodes.length) box.append(meta);
