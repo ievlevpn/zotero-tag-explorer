@@ -1,6 +1,6 @@
 // Self-check for the pure helpers: `node test.js`.
 const assert = require("assert");
-const { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, matchText, neighbours, groupByTitle } = require("./bootstrap.js");
+const { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, matchText, neighbours, matchBooks, bookList, related, groupByBook } = require("./bootstrap.js");
 
 assert.ok(fuzzy("", "anything"));
 assert.ok(fuzzy("mdv", "medieval"));
@@ -15,7 +15,7 @@ assert.strictEqual(rank("kant", "on kant"), 2);
 assert.strictEqual(rank("kant", "kein anderer typ"), 3);
 assert.strictEqual(rank("kant", "hegel"), -1);
 
-const e = (title, sort, ...tags) => ({ title, sort, tags });
+const e = (title, sort, ...tags) => ({ title, sort, tags, book: title.length, creator: "" });
 const list = [
 	e("Being and Time", "00002", "хайдеггер", "take"),
 	e("Being and Time", "00001", "хайдеггер"),
@@ -124,7 +124,7 @@ assert.deepStrictEqual(neighbours(graph, "nobody"), []);          // a tag with 
 assert.strictEqual(neighbours(graph, "Arendt", 1).length, 1);     // honours the limit
 
 // One block per book, highlights inside it in reading order.
-const books = groupByTitle(list);
+const books = groupByBook(list);
 assert.deepStrictEqual(books.map((b) => b.title), ["Being and Time", "Negative Dialectics"]);
 assert.deepStrictEqual(books[0].rows.map((r) => r.sort), ["00001", "00002"]);
 

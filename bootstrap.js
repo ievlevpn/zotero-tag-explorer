@@ -12,7 +12,8 @@
  * No build step: plain bootstrapped plugin. Zip the folder — see README.md.
  */
 
-const TAG_CAP = 400;      // tag rows rendered per search — the rest are a count
+const TAG_CAP = 400;   // rows rendered per search — tags or books
+const BOOK_TAGS = 24;  // tag chips shown on a book before "+N more"      // tag rows rendered per search — the rest are a count
 const HL_CAP = 200;       // highlights rendered per tag before "show all"
 
 let menuID = null;
@@ -23,8 +24,9 @@ let counts = [];          // [{ tag, n }] for the current scope, best first
 let loading = null;       // the in-flight buildIndex(), or null
 let win = null;           // the one explorer window
 let scope = null;         // collection id the view is restricted to, or null
-let selected = null;      // the tag whose highlights are shown
-let finding = null;       // a search over every highlight, instead of a tag
+let axis = "tags";        // which list the left pane offers: "tags" | "books"
+let view = null;          // what the right pane shows:
+                          //   { kind: "tag" | "book" | "find", value }
 
 const oops = (e) => Zotero.logError(e);
 
@@ -85,6 +87,10 @@ const matchTags = (tags, q) =>
 const matchColls = (colls, q) =>
 	matchBy(colls, q, (c) => c.path, (a, b) => a.path.length - b.path.length || a.path.localeCompare(b.path));
 
+const matchBooks = (books, q) =>
+	matchBy(books, q, (b) => `${b.creator} ${b.title}`,
+		(a, b) => b.n - a.n || a.title.localeCompare(b.title));
+
 function countByCollection(list) {
 	const m = new Map();
 	for (const e of list) for (const id of e.colls) m.set(id, (m.get(id) || 0) + 1);
@@ -144,7 +150,7 @@ function matchText(rows, query) {
 	const words = query.toLowerCase().split(/\s+/).filter(Boolean);
 	if (!words.length) return rows;
 	return rows.filter((r) => {
-		const hay = (r.text + " " + r.comment + " " + r.title).toLowerCase();
+		const hay = (r.text + " " + r.comment + " " + r.title + " " + (r.creator || "")).toLowerCase();
 		return words.every((w) => hay.includes(w));
 	});
 }
@@ -163,15 +169,55 @@ function neighbours(rows, tag, limit = 14) {
 		.slice(0, limit);
 }
 
-// Highlights read as a book at a time: same title together, in reading order.
-function groupByTitle(list) {
+// Highlights read as a book at a time, in reading order. Keyed on the book, not
+// on its name: two different books can share a title, and merging them would be
+// a quiet lie about where a highlight came from.
+function groupByBook(list) {
 	const out = [];
-	for (const e of list.slice().sort((a, b) =>
-		a.title.localeCompare(b.title) || String(a.sort).localeCompare(String(b.sort)))) {
-		if (!out.length || out[out.length - 1].title !== e.title) out.push({ title: e.title, rows: [] });
+	const sorted = list.slice().sort((a, b) =>
+		a.title.localeCompare(b.title) || (a.book - b.book) || String(a.sort).localeCompare(String(b.sort)));
+	for (const e of sorted) {
+		const last = out[out.length - 1];
+		if (!last || last.book !== e.book) {
+			out.push({ book: e.book, title: e.title, creator: e.creator, rows: [] });
+		}
 		out[out.length - 1].rows.push(e);
 	}
 	return out;
+}
+
+// The second axis: every book with highlights here, most marked first.
+function bookList(rows) {
+	const m = new Map();
+	for (const e of rows) {
+		let b = m.get(e.book);
+		if (!b) m.set(e.book, b = { book: e.book, title: e.title, creator: e.creator, n: 0 });
+		b.n++;
+	}
+	return [...m.values()].sort((a, b) => b.n - a.n || a.title.localeCompare(b.title));
+}
+
+// Books sharing tags with this one, most shared first. Raw counts, deliberately:
+// in a real library almost every tag lives in one or two books, so only a
+// handful span enough of them to distort this — weighting them down would cost
+// code and change nothing.
+function related(rows, book, limit = 8) {
+	const byBook = new Map();
+	for (const e of rows) {
+		let b = byBook.get(e.book);
+		if (!b) byBook.set(e.book, b = { book: e.book, title: e.title, creator: e.creator, tags: new Set() });
+		for (const t of e.tags) b.tags.add(t);
+	}
+	const mine = byBook.get(book);
+	if (!mine) return [];
+	const out = [];
+	for (const b of byBook.values()) {
+		if (b.book === book) continue;
+		let shared = 0;
+		for (const t of b.tags) if (mine.tags.has(t)) shared++;
+		if (shared) out.push({ book: b.book, title: b.title, creator: b.creator, shared });
+	}
+	return out.sort((a, b) => b.shared - a.shared || a.title.localeCompare(b.title)).slice(0, limit);
 }
 
 // --- the index -------------------------------------------------------------
@@ -234,7 +280,11 @@ async function buildIndex() {
 			comment: (a.annotationComment || "").trim(),
 			page: a.annotationPageLabel || "",
 			sort: a.annotationSortIndex || "",
+			book: top.id,
 			title: safe(() => top.getDisplayTitle(), "") || "(untitled)",
+			// Titles do not carry the author, so without this you cannot search
+			// for "brown" and you cannot tell two editions apart in a list.
+			creator: safe(() => top.getField("firstCreator"), "") || "",
 			colls: collsOf.get(top.id),
 		});
 	}
@@ -245,7 +295,10 @@ const inScope = (e) => !scope || e.colls.has(scope);
 
 function rescope() {
 	counts = tagCounts(entries.filter(inScope));
-	if (selected && !counts.some((c) => c.tag === selected)) selected = null;
+	if (!view) return;
+	// A view that the new scope has emptied is not a view any more.
+	if (view.kind === "tag" && !counts.some((c) => c.tag === view.value)) view = null;
+	if (view.kind === "book" && !entries.some((e) => inScope(e) && e.book === view.value)) view = null;
 }
 
 // --- the window ------------------------------------------------------------
@@ -286,6 +339,22 @@ body { margin:0; height:100vh; display:flex; flex-direction:column;
 .near i:hover b { color:HighlightText; }
 .cols { flex:1; min-height:0; display:flex; }
 .left { width:290px; display:flex; flex-direction:column; border-right:1px solid GrayText; }
+.axis { display:flex; margin:8px 8px 0; border:1px solid GrayText; border-radius:5px; overflow:hidden; }
+.axis button { flex:1; font:12px sans-serif; padding:3px 0; border:0;
+	background:transparent; color:CanvasText; cursor:pointer; }
+.axis button.on { background:Highlight; color:HighlightText; }
+.axis button:not(.on):hover { background:color-mix(in srgb, Highlight 25%, Canvas); }
+.nm { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.nm i.who { font-style:normal; color:GrayText; }
+.tag.on .nm i.who { color:HighlightText; }
+.book .nm { font-weight:700; cursor:pointer; }
+.book .nm:hover { text-decoration:underline; }
+.rel { margin:10px 0 2px; }
+.relh { color:GrayText; font-size:11px; margin-bottom:2px; }
+.rel .row { display:flex; gap:8px; align-items:baseline; padding:2px 6px; border-radius:4px; cursor:pointer; }
+.rel .row b { color:GrayText; font-size:11px; font-weight:400; white-space:nowrap; }
+.rel .row:hover { background:Highlight; color:HighlightText; }
+.rel .row:hover b, .rel .row:hover i.who { color:HighlightText; }
 .hunt { display:flex; gap:6px; margin:8px; }
 .hunt input { flex:1; min-width:0; padding:5px 8px; font:13px sans-serif; background:Canvas; color:CanvasText;
 	border:1px solid GrayText; border-radius:5px; }
@@ -506,8 +575,8 @@ function build(w) {
 		rescope();
 		countLabel.textContent = summary();
 		push();
-		renderTags();
-		renderHighlights();
+		renderLeft();
+		renderRight();
 	}
 
 	// Focusing empties the box so typing starts a fresh search; leaving without
@@ -530,9 +599,19 @@ function build(w) {
 	// left: search + tag list; right: the highlights
 	const search = doc.createElement("input");
 	search.type = "search";
-	search.placeholder = "Search tags…";
-	const tags = el(doc, "div", "tags");
+	const listBox = el(doc, "div", "tags");
 	const left = el(doc, "div", "left");
+
+	// Two ways in. The panes keep their jobs — left picks, right reads — and
+	// only the source of the list changes.
+	const tabBtn = {};
+	const tabs = el(doc, "div", "axis");
+	for (const [id, label] of [["tags", "Tags"], ["books", "Books"]]) {
+		const t = el(doc, "button", null, label);
+		t.addEventListener("click", () => setAxis(id));
+		tabBtn[id] = t;
+		tabs.append(t);
+	}
 	// Two thirds of the tags in a well-used library have been used exactly once,
 	// which puts them past the end of every sorted list. A die is the only thing
 	// that ever surfaces them. It draws from what is listed, so a search and a
@@ -542,22 +621,25 @@ function build(w) {
 	die.title = "Show a random tag from this list";
 	die.addEventListener("click", () => {
 		if (!visible.length) return;
-		pick(visible[Math.floor(Math.random() * visible.length)].tag);
-		const on = tags.querySelector(".tag.on");
+		pickOne(visible[Math.floor(Math.random() * visible.length)]);
+		const on = listBox.querySelector(".tag.on");
 		if (on) on.scrollIntoView({ block: "nearest" });
 	});
 	const hunt = el(doc, "div", "hunt");
 	hunt.append(search, die);
-	left.append(hunt, tags);
+	left.append(tabs, hunt, listBox);
 	const right = el(doc, "div", "right");
 	const cols = el(doc, "div", "cols");
 	cols.append(left, right);
 	doc.body.append(head, cols);
 
-	let visible = [];   // the tags currently listed, in order — for the arrow keys
-	let hlQuery = "";   // the filter over the selected tag's highlights
-	let trail = [];     // where you have been: { scope, selected, finding, q }
+	let visible = [];   // whatever the left list currently offers — tags or books
+	let hlQuery = "";   // the filter over the highlights on the right
+	let trail = [];     // where you have been: { scope, axis, view, q }
 	let hIndex = -1;
+
+	const isTag = (t) => !!view && view.kind === "tag" && view.value === t;
+	const isBook = (b) => !!view && view.kind === "book" && view.value === b;
 
 	// --- where you are, and how to get back ---------------------------------
 
@@ -566,11 +648,14 @@ function build(w) {
 		fwd.disabled = hIndex >= trail.length - 1;
 	}
 
+	const same = (a, b) => (!a && !b) || (!!a && !!b && a.kind === b.kind && a.value === b.value);
+
 	function push() {
-		const now = { scope, selected, finding, q: search.value };
+		const now = { scope, axis, view, q: search.value };
 		const last = trail[hIndex];
-		if (last && last.scope === now.scope && last.selected === now.selected
-			&& last.finding === now.finding) return paintNav();
+		if (last && last.scope === now.scope && last.axis === now.axis && same(last.view, now.view)) {
+			return paintNav();
+		}
 		trail = trail.slice(0, hIndex + 1);
 		trail.push(now);
 		hIndex = trail.length - 1;
@@ -583,73 +668,118 @@ function build(w) {
 		hIndex = next;
 		const was = trail[hIndex];
 		scope = was.scope;
-		selected = was.selected;
-		finding = was.finding;
+		axis = was.axis;
+		view = was.view;
 		search.value = was.q;
 		hlQuery = "";
 		scopeBox.value = scopeLabel();
 		rescope();
 		countLabel.textContent = summary();
-		renderTags();
-		renderHighlights();
+		renderLeft();
+		renderRight();
 		paintNav();
 	}
 
-	function pick(tag) {
-		selected = tag;
-		finding = null;
+	// --- moving about --------------------------------------------------------
+
+	function show(next) {
+		view = next;
 		hlQuery = "";
 		push();
-		renderTags();
-		renderHighlights();
+		renderLeft();
+		renderRight();
 		right.scrollTop = 0;
 	}
 
-	function find(query) {
-		finding = query;
-		selected = null;
-		hlQuery = "";
+	const pickTag = (tag) => show({ kind: "tag", value: tag });
+	const pickBook = (book) => show({ kind: "book", value: book });
+	const find = (query) => show({ kind: "find", value: query });
+	const pickOne = (x) => (axis === "tags" ? pickTag(x.tag) : pickBook(x.book));
+
+	// Arriving from somewhere else — a chip, a related book — means landing on
+	// the other axis with a clean search box.
+	function jumpToTag(tag) { axis = "tags"; search.value = ""; pickTag(tag); }
+	function jumpToBook(book) { axis = "books"; search.value = ""; pickBook(book); }
+
+	function setAxis(id) {
+		if (axis === id) return;
+		axis = id;
+		search.value = "";
 		push();
-		renderTags();
-		renderHighlights();
-		right.scrollTop = 0;
+		renderLeft();
 	}
 
-	// --- the tag list --------------------------------------------------------
+	// --- the left pane -------------------------------------------------------
 
-	function renderTags() {
+	function renderLeft() {
+		for (const id of Object.keys(tabBtn)) tabBtn[id].className = axis === id ? "on" : "";
+		search.placeholder = axis === "tags" ? "Search tags\u2026" : "Search books\u2026";
+		listBox.replaceChildren();
+		if (axis === "books") renderBookRows();
+		else renderTagRows();
+	}
+
+	function overflow(shown, total) {
+		if (total > shown) {
+			listBox.append(el(doc, "div", "empty", `…and ${total - shown} more — keep typing`));
+		}
+	}
+
+	function renderTagRows() {
 		const q = search.value.trim();
 		visible = matchTags(counts, search.value);
-		tags.replaceChildren();
-		// Pinned above the matches, and deliberately not part of them: the tag
+		// Pinned above the matches, and deliberately not one of them: the tag
 		// vocabulary is not the only way in, and when most tags have been used
 		// once it is often not the way at all.
 		if (q) {
-			const row = el(doc, "div", "tag all" + (finding === q ? " on" : ""));
+			const row = el(doc, "div", "tag all"
+				+ (view && view.kind === "find" && view.value === q ? " on" : ""));
 			row.append(el(doc, "span", null, `Search every highlight for \u201C${q}\u201D`));
 			row.addEventListener("click", () => find(q));
-			tags.append(row);
+			listBox.append(row);
 		}
 		if (!visible.length) {
-			tags.append(el(doc, "div", "empty", counts.length ? "No tags match." : "No tagged highlights here."));
+			listBox.append(el(doc, "div", "empty", counts.length ? "No tags match." : "No tagged highlights here."));
 			return;
 		}
 		for (const c of visible.slice(0, TAG_CAP)) {
-			const row = el(doc, "div", "tag" + (c.tag === selected ? " on" : ""));
+			const row = el(doc, "div", "tag" + (isTag(c.tag) ? " on" : ""));
 			row.append(el(doc, "span", null, c.tag), el(doc, "b", null, String(c.n)));
-			row.addEventListener("click", () => pick(c.tag));
-			tags.append(row);
+			row.addEventListener("click", () => pickTag(c.tag));
+			listBox.append(row);
 		}
-		if (visible.length > TAG_CAP) {
-			tags.append(el(doc, "div", "empty", `…and ${visible.length - TAG_CAP} more — keep typing`));
-		}
+		overflow(TAG_CAP, visible.length);
 	}
 
-	// --- the highlights ------------------------------------------------------
+	function renderBookRows() {
+		const all = bookList(entries.filter(inScope));
+		visible = matchBooks(all, search.value);
+		if (!visible.length) {
+			listBox.append(el(doc, "div", "empty", all.length ? "No books match." : "Nothing here."));
+			return;
+		}
+		for (const b of visible.slice(0, TAG_CAP)) {
+			const row = el(doc, "div", "tag" + (isBook(b.book) ? " on" : ""));
+			row.append(bookName(b), el(doc, "b", null, String(b.n)));
+			row.addEventListener("click", () => pickBook(b.book));
+			listBox.append(row);
+		}
+		overflow(TAG_CAP, visible.length);
+	}
 
-	// One grouped, capped list of cards, repaintable in place so that typing in
-	// a filter never rebuilds the box you are typing into.
-	function listOf(rows) {
+	// Author first, then the title — the way a shelf reads.
+	function bookName(b) {
+		const name = el(doc, "span", "nm");
+		if (b.creator) name.append(el(doc, "i", "who", b.creator + " "));
+		name.append(markup(doc, b.title));
+		return name;
+	}
+
+	// --- the right pane ------------------------------------------------------
+
+	// One grouped-or-flat, capped list of cards, repaintable in place so that
+	// typing in a filter never rebuilds the box you are typing into.
+	function listOf(rows, flat) {
 		let cap = HL_CAP;
 		const list = el(doc, "div");
 		const paint = () => {
@@ -658,15 +788,23 @@ function build(w) {
 				list.append(el(doc, "div", "empty", "Nothing matches."));
 				return;
 			}
-			let room = cap;
-			for (const book of groupByTitle(rows)) {
-				if (room <= 0) break;
-				const head = el(doc, "div", "book");
-				head.append(marked(doc, "b", null, book.title),
-					el(doc, "span", null, `${book.rows.length}`));
-				list.append(head);
-				for (const e of book.rows.slice(0, room)) list.append(card(e));
-				room -= book.rows.length;
+			if (flat) {
+				// One book already: its own name over every card would be noise.
+				const ordered = rows.slice().sort((a, b) => String(a.sort).localeCompare(String(b.sort)));
+				for (const e of ordered.slice(0, cap)) list.append(card(e));
+			} else {
+				let room = cap;
+				for (const book of groupByBook(rows)) {
+					if (room <= 0) break;
+					const head = el(doc, "div", "book");
+					const name = bookName(book);
+					name.title = "Show this book";
+					name.addEventListener("click", () => jumpToBook(book.book));
+					head.append(name, el(doc, "span", null, `${book.rows.length}`));
+					list.append(head);
+					for (const e of book.rows.slice(0, room)) list.append(card(e));
+					room -= book.rows.length;
+				}
 			}
 			if (rows.length > cap) {
 				const more = el(doc, "button", "more", `Show all ${rows.length}`);
@@ -678,89 +816,138 @@ function build(w) {
 		return { list, show: (next) => { rows = next; cap = HL_CAP; paint(); } };
 	}
 
-	function renderHighlights() {
+	// The filter box and the list it drives, shared by the tag and book views.
+	function filtered(rows, flat) {
+		const bar = el(doc, "div", "find");
+		const box = doc.createElement("input");
+		box.type = "text";
+		box.placeholder = "Filter these highlights\u2026";
+		box.value = hlQuery;
+		const count = el(doc, "span");
+		bar.append(box, count);
+
+		const list = listOf(matchText(rows, hlQuery), flat);
+		const sync = () => {
+			const shown = matchText(rows, hlQuery);
+			count.textContent = (hlQuery ? `${shown.length} of ${rows.length}` : String(rows.length))
+				+ ` highlight${rows.length === 1 ? "" : "s"}` + (scope ? " in this collection" : "");
+			list.show(shown);
+		};
+		sync();
+
+		box.addEventListener("input", () => { hlQuery = box.value; sync(); });
+		box.addEventListener("keydown", (ev) => {
+			if (ev.key !== "Escape") return;
+			ev.stopPropagation();          // or the document handler closes the window
+			ev.preventDefault();
+			if (!box.value) return box.blur();
+			box.value = "";
+			hlQuery = "";
+			sync();
+		});
+		return [bar, list.list];
+	}
+
+	// A row of clickable tag chips with their counts.
+	function chips(label, items, onPick, extra) {
+		const strip = el(doc, "div", "near");
+		strip.append(el(doc, "span", null, label));
+		for (const it of items) {
+			const chip = el(doc, "i", null, it.tag);
+			chip.append(el(doc, "b", null, String(it.n)));
+			chip.addEventListener("click", () => onPick(it.tag));
+			strip.append(chip);
+		}
+		if (extra) strip.append(el(doc, "span", null, extra));
+		return strip;
+	}
+
+	function renderRight() {
 		right.replaceChildren();
-		if (finding) return renderFound();
-		if (!selected) {
-			right.append(el(doc, "div", "empty", "Pick a tag, or search every highlight."));
+		if (!view) {
+			right.append(el(doc, "div", "empty", "Pick a tag or a book."));
 			return;
 		}
+		if (view.kind === "find") return renderFound();
+		if (view.kind === "book") return renderBook();
+		return renderTag();
+	}
+
+	function renderTag() {
 		const scoped = entries.filter(inScope);
-		const rows = scoped.filter((e) => e.tags.includes(selected));
+		const rows = scoped.filter((e) => e.tags.includes(view.value));
 
 		const title = el(doc, "div", "title");
 		const rename = el(doc, "button", null, "Rename");
 		rename.title = "Rename this tag everywhere it is used";
 		rename.addEventListener("click", () => startRename(title));
-		title.append(el(doc, "h1", null, selected), rename);
+		title.append(el(doc, "h1", null, view.value), rename);
 		right.append(title);
 
-		const near = neighbours(scoped, selected);
-		if (near.length) {
-			const strip = el(doc, "div", "near");
-			strip.append(el(doc, "span", null, "appears with"));
-			for (const n of near) {
-				const chip = el(doc, "i", null, n.tag);
-				chip.append(el(doc, "b", null, String(n.n)));
-				chip.title = `${n.n} highlight${n.n === 1 ? "" : "s"} carry both`;
-				chip.addEventListener("click", () => { search.value = ""; pick(n.tag); });
-				strip.append(chip);
-			}
-			right.append(strip);
+		const near = neighbours(scoped, view.value);
+		if (near.length) right.append(chips("appears with", near, jumpToTag));
+
+		right.append(...filtered(rows, false));
+	}
+
+	function renderBook() {
+		const scoped = entries.filter(inScope);
+		const rows = scoped.filter((e) => e.book === view.value);
+		if (!rows.length) {
+			right.append(el(doc, "div", "empty", "Nothing from this book here."));
+			return;
+		}
+		const b = rows[0];
+
+		const title = el(doc, "div", "title");
+		title.append(marked(doc, "h1", null, b.title));
+		right.append(title);
+		if (b.creator) right.append(el(doc, "div", "sub", b.creator));
+
+		const mine = tagCounts(rows);
+		if (mine.length) {
+			right.append(chips("tagged", mine.slice(0, BOOK_TAGS), jumpToTag,
+				mine.length > BOOK_TAGS ? `+${mine.length - BOOK_TAGS} more` : null));
 		}
 
-		const bar = el(doc, "div", "find");
-		const filter = doc.createElement("input");
-		filter.type = "text";
-		filter.placeholder = "Filter these highlights\u2026";
-		filter.value = hlQuery;
-		const count = el(doc, "span");
-		bar.append(filter, count);
-		right.append(bar);
+		const rel = related(scoped, view.value);
+		if (rel.length) {
+			const box = el(doc, "div", "rel");
+			box.append(el(doc, "div", "relh", "related books"));
+			for (const r of rel) {
+				const row = el(doc, "div", "row");
+				row.title = "Show this book";
+				row.append(bookName(r), el(doc, "b", null,
+					`${r.shared} shared tag${r.shared === 1 ? "" : "s"}`));
+				row.addEventListener("click", () => jumpToBook(r.book));
+				box.append(row);
+			}
+			right.append(box);
+		}
 
-		const view = listOf(matchText(rows, hlQuery));
-		right.append(view.list);
-
-		const sync = () => {
-			const shown = matchText(rows, hlQuery);
-			count.textContent = (hlQuery ? `${shown.length} of ${rows.length}` : String(rows.length))
-				+ ` highlight${rows.length === 1 ? "" : "s"}` + (scope ? " in this collection" : "");
-			view.show(shown);
-		};
-		sync();
-
-		filter.addEventListener("input", () => { hlQuery = filter.value; sync(); });
-		filter.addEventListener("keydown", (ev) => {
-			if (ev.key !== "Escape") return;
-			ev.stopPropagation();          // or the document handler closes the window
-			ev.preventDefault();
-			if (!filter.value) return filter.blur();
-			filter.value = "";
-			hlQuery = "";
-			sync();
-		});
+		right.append(...filtered(rows, true));
 	}
 
 	// Every highlight, not just one tag's. The cards carry their tags, so a hit
 	// is also a way into the tag that would have found it.
 	function renderFound() {
-		const rows = matchText(entries.filter(inScope), finding);
+		const rows = matchText(entries.filter(inScope), view.value);
 		const title = el(doc, "div", "title");
-		title.append(el(doc, "h1", null, `\u201C${finding}\u201D`));
+		title.append(el(doc, "h1", null, `\u201C${view.value}\u201D`));
 		right.append(title);
 		right.append(el(doc, "div", "sub",
 			`${rows.length} highlight${rows.length === 1 ? "" : "s"} anywhere in your library`
 			+ (scope ? ", in this collection" : "")));
-		right.append(listOf(rows).list);
+		right.append(listOf(rows, false).list);
 	}
 
 	function startRename(title) {
-		const tag = selected;
+		const tag = view.value;
 		const box = doc.createElement("input");
 		box.type = "text";
 		box.value = tag;
 		let done = false;
-		const cancel = () => { if (!done) { done = true; renderHighlights(); } };
+		const cancel = () => { if (!done) { done = true; renderRight(); } };
 		box.addEventListener("blur", cancel);
 		box.addEventListener("keydown", (ev) => {
 			if (ev.key === "Escape") { ev.stopPropagation(); ev.preventDefault(); return cancel(); }
@@ -800,7 +987,7 @@ function build(w) {
 		const merge = el(doc, "button", null, "Merge");
 		merge.addEventListener("click", () => doRename(tag, next, true));
 		const cancel = el(doc, "button", null, "Cancel");
-		cancel.addEventListener("click", () => renderHighlights());
+		cancel.addEventListener("click", () => renderRight());
 		title.replaceChildren(
 			el(doc, "h1", null, next),
 			el(doc, "span", "warn",
@@ -812,7 +999,7 @@ function build(w) {
 			if (ev.key !== "Escape") return;
 			ev.stopPropagation();          // or the document handler closes the window
 			ev.preventDefault();
-			renderHighlights();
+			renderRight();
 		});
 		merge.focus();
 	}
@@ -821,7 +1008,7 @@ function build(w) {
 	// the tag's colour follows it, and the change syncs. Which means it is not
 	// limited to annotations, or to the collection currently in scope.
 	async function doRename(tag, next, merging) {
-		if (!next || next === tag) return renderHighlights();
+		if (!next || next === tag) return renderRight();
 		const libs = new Set(entries.filter((e) => e.tags.includes(tag)).map((e) => e.libraryID));
 		if (!merging) {
 			const n = await countTagged(next, libs);
@@ -831,16 +1018,16 @@ function build(w) {
 			for (const lib of libs) await Zotero.Tags.rename(lib, tag, next);
 		} catch (e) {
 			oops(e);
-			renderHighlights();
+			renderRight();
 			return right.prepend(el(doc, "div", "err", `Could not rename: ${e.message}`));
 		}
 		renameInList(entries, tag, next, libs);
-		selected = next;
-		for (const t of trail) if (t.selected === tag) t.selected = next;
+		view = { kind: "tag", value: next };
+		for (const t of trail) if (t.view && t.view.kind === "tag" && t.view.value === tag) t.view = view;
 		rescope();
 		countLabel.textContent = summary();
-		renderTags();
-		renderHighlights();
+		renderLeft();
+		renderRight();
 	}
 
 	function card(e) {
@@ -854,14 +1041,10 @@ function build(w) {
 		const meta = el(doc, "div", "m");
 		if (e.page) meta.append(el(doc, "span", null, "p. " + e.page));
 		for (const t of e.tags) {
-			if (t === selected) continue;
+			if (isTag(t)) continue;
 			const chip = el(doc, "i", null, t);
 			chip.title = "Show this tag";
-			chip.addEventListener("click", (ev) => {
-				ev.stopPropagation();
-				search.value = "";
-				pick(t);
-			});
+			chip.addEventListener("click", (ev) => { ev.stopPropagation(); jumpToTag(t); });
 			meta.append(chip);
 		}
 		if (meta.childNodes.length) box.append(meta);
@@ -875,16 +1058,16 @@ function build(w) {
 		return box;
 	}
 
-	search.addEventListener("input", renderTags);
+	search.addEventListener("input", renderLeft);
 	search.addEventListener("keydown", (ev) => {
 		if (ev.key !== "ArrowDown" && ev.key !== "ArrowUp" && ev.key !== "Enter") return;
 		if (!visible.length) return;
 		ev.preventDefault();
-		const at = visible.findIndex((c) => c.tag === selected);
-		if (ev.key === "Enter") return pick(visible[at < 0 ? 0 : at].tag);
-		const next = Math.max(0, Math.min(visible.length - 1, at + (ev.key === "ArrowDown" ? 1 : -1)));
-		pick(visible[next].tag);
-		const on = tags.querySelector(".tag.on");
+		const cur = visible.findIndex((x) => (axis === "tags" ? isTag(x.tag) : isBook(x.book)));
+		if (ev.key === "Enter") return pickOne(visible[cur < 0 ? 0 : cur]);
+		const next = Math.max(0, Math.min(visible.length - 1, cur + (ev.key === "ArrowDown" ? 1 : -1)));
+		pickOne(visible[next]);
+		const on = listBox.querySelector(".tag.on");
 		if (on) on.scrollIntoView({ block: "nearest" });
 	});
 
@@ -951,5 +1134,5 @@ function uninstall() {}
 
 // node-only: lets test.js import the pure helpers; no-op inside Zotero.
 if (typeof module !== "undefined") {
-	module.exports = { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, matchText, neighbours, groupByTitle };
+	module.exports = { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, matchText, neighbours, matchBooks, bookList, related, groupByBook };
 }

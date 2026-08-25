@@ -4,7 +4,8 @@ A Zotero 10 plugin for reading your own marginalia by tag.
 
 ![Browsing the highlights behind a tag](docs/01-browse.png)
 
-**Tools → Tag Explorer…** opens a window:
+**Tools → Tag Explorer…** opens a window with two ways in — **Tags** and
+**Books** — sharing one reading pane:
 
 - every tag you have put on a highlight, most used first, with a fuzzy search
   box: your letters have to appear in the tag in order, but need not be
@@ -36,7 +37,12 @@ A Zotero 10 plugin for reading your own marginalia by tag.
   already in use, Zotero would silently merge the two, so the plugin stops and
   says how many items the other tag is on; merging then takes a second,
   deliberate click;
-- a **die** beside the search box rolls a random tag. Two thirds of the tags in
+- a **Books** axis: every book you have marked, most-marked first, searchable by
+  author as well as title. A book shows its own tag profile, then **related
+  books** — the ones it shares the most tags with, which is how you find out
+  that two things you read a year apart were the same project — then its
+  highlights in reading order;
+- a **die** beside the search box rolls a random tag, or a random book. Two thirds of the tags in
   a well-used library have been used exactly once, which puts them past the end
   of every sorted list; this is the only thing that ever surfaces them. It draws
   from what is currently listed, so a search or a collection narrows the roll;
@@ -69,19 +75,24 @@ result carries its tags, so any hit is a doorway back into the tag axis:
 
 ![Searching every highlight](docs/04-find.png)
 
+A book: what you tagged in it, what it shares those tags with, and everything
+you marked, in reading order:
+
+![A book and its related books](docs/05-books.png)
+
 Restricting everything to one collection, searched the same way over the full
 path, with the number of highlights each one holds:
 
-![Scoping to a collection](docs/05-collections.png)
+![Scoping to a collection](docs/06-collections.png)
 
 Renaming a tag in place. Enter hands it to Zotero's own rename, so every item in
 the library that carries the tag moves with it:
 
-![Renaming a tag](docs/06-rename.png)
+![Renaming a tag](docs/07-rename.png)
 
 It follows the system theme:
 
-![Dark mode](docs/07-dark.png)
+![Dark mode](docs/08-dark.png)
 
 <sub>Screenshots show invented demo content, not a real library. They are of the
 real interface: `bootstrap.js` is loaded verbatim and draws these pages itself.</sub>
