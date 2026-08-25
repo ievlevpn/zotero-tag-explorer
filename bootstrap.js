@@ -225,6 +225,30 @@ function neighbours(rows, tag, limit = 14) {
 		.slice(0, limit);
 }
 
+// Split a plain string into runs, marking the parts that matched the filter.
+// A mask rather than successive replacements: two search words can overlap in
+// the text ("deep" and "epl" in "deeply"), and marking twice would nest.
+function markRuns(str, words) {
+	if (!str || !words.length) return str ? [str] : [];
+	const low = str.toLowerCase();
+	const hit = new Array(str.length).fill(false);
+	for (const w of words) {
+		if (!w) continue;
+		for (let i = low.indexOf(w); i >= 0; i = low.indexOf(w, i + 1)) {
+			for (let k = i; k < i + w.length; k++) hit[k] = true;
+		}
+	}
+	const out = [];
+	let start = 0;
+	for (let i = 1; i <= str.length; i++) {
+		if (i < str.length && hit[i] === hit[i - 1]) continue;
+		const piece = str.slice(start, i);
+		out.push(hit[start] ? { mark: piece } : piece);
+		start = i;
+	}
+	return out;
+}
+
 // The markup tags stripped, for anything that wants the words alone.
 const plain = (str) => str.replace(MARKUP, "");
 
@@ -621,6 +645,10 @@ body { margin:0; height:100vh; display:flex; flex-direction:column;
 .hl .copy:hover { background:Highlight; color:HighlightText; }
 .hl:hover { background:color-mix(in srgb, var(--c) 22%, Canvas); }
 .hl .t { white-space:pre-wrap; }
+/* the UA default is a yellow block with black text, which is unreadable on a
+ * dark card and fights the annotation's own colour */
+mark { background:color-mix(in srgb, Highlight 50%, Canvas); color:inherit;
+	border-radius:2px; padding:0 1px; }
 .hl .c { white-space:pre-wrap; margin-top:5px; padding-left:8px; border-left:2px solid GrayText;
 	color:CanvasText; }
 .hl .m { margin-top:5px; color:GrayText; font-size:11px; display:flex; flex-wrap:wrap; gap:5px; align-items:center; }
@@ -640,11 +668,16 @@ function el(doc, tag, cls, text) {
 
 // The tag names come from MARKUP's whitelist, so this cannot build anything but
 // b/i/sub/sup — no innerHTML, nothing else gets through.
-function markup(doc, str) {
+function markup(doc, str, words) {
 	const frag = doc.createDocumentFragment();
 	const put = (nodes, into) => {
 		for (const n of nodes) {
-			if (typeof n === "string") { into.append(n); continue; }
+			if (typeof n === "string") {
+				for (const run of markRuns(n, words || [])) {
+					into.append(typeof run === "string" ? run : el(doc, "mark", null, run.mark));
+				}
+				continue;
+			}
 			const box = doc.createElement(n.tag);
 			put(n.kids, box);
 			into.append(box);
@@ -655,9 +688,9 @@ function markup(doc, str) {
 }
 
 // Same, as a fresh element.
-function marked(doc, tag, cls, str) {
+function marked(doc, tag, cls, str, words) {
 	const node = el(doc, tag, cls);
-	node.append(markup(doc, str));
+	node.append(markup(doc, str, words));
 	return node;
 }
 
@@ -882,6 +915,12 @@ function build(w) {
 	let hIndex = -1;
 
 	const isTag = (t) => !!view && view.kind === "tag" && view.value === t;
+	// The words to mark: the global search is its own filter, so both boxes feed
+	// the same highlighting.
+	const marks = () => {
+		const q = view && view.kind === "find" ? view.value : hlQuery;
+		return q ? q.toLowerCase().split(/\s+/).filter(Boolean) : [];
+	};
 	// The tag currently doing the narrowing, whichever axis you are on.
 	const activeTag = () => (!view ? null
 		: view.kind === "tag" ? view.value
@@ -1034,7 +1073,7 @@ function build(w) {
 	function bookName(b) {
 		const name = el(doc, "span", "nm");
 		if (b.creator) name.append(el(doc, "i", "who", b.creator + " "));
-		name.append(markup(doc, b.title));
+		name.append(markup(doc, b.title, marks()));
 		return name;
 	}
 
@@ -1440,9 +1479,9 @@ function build(w) {
 		const box = el(doc, "div", "hl");
 		box.style.setProperty("--c", e.color);
 		box.title = "Open in the reader";
-		if (e.text) box.append(marked(doc, "div", "t", e.text));
+		if (e.text) box.append(marked(doc, "div", "t", e.text, marks()));
 		else box.append(el(doc, "div", "t", `[${e.type}]`));
-		if (e.comment) box.append(marked(doc, "div", "c", e.comment));
+		if (e.comment) box.append(marked(doc, "div", "c", e.comment, marks()));
 
 		const meta = el(doc, "div", "m");
 		if (e.page) meta.append(el(doc, "span", null, "p. " + e.page));
@@ -1552,5 +1591,5 @@ function uninstall() {}
 
 // node-only: lets test.js import the pure helpers; no-op inside Zotero.
 if (typeof module !== "undefined") {
-	module.exports = { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, matchText, neighbours, matchBooks, bookList, related, dupeClusters, nearMisses, clusterKey, withoutDismissed, plain, asText, groupByBook };
+	module.exports = { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, markRuns, matchText, neighbours, matchBooks, bookList, related, dupeClusters, nearMisses, clusterKey, withoutDismissed, plain, asText, groupByBook };
 }

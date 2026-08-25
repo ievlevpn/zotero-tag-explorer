@@ -19,8 +19,10 @@ A Zotero 10 plugin for reading your own marginalia by tag.
   stays as it is;
 - a filter over the highlights of the selected tag — every word you type has to
   appear somewhere in the highlight, your comment or the book, in any order, so
-  `decline brown` and `brown decline` both find the same one. `Esc` clears it;
-  it resets whenever you pick a different tag;
+  `decline brown` and `brown decline` both find the same one. Matches are
+  marked in place, so you can see *why* something survived the filter instead of
+  hunting for the word. `Esc` clears it; it resets whenever you pick a different
+  tag;
 - a collection box at the top to restrict everything to one project —
   fuzzy-searchable over the full path (`phil frank` finds *Philosophy /
   Frankfurt School*), showing how many highlights each holds,
@@ -28,7 +30,8 @@ A Zotero 10 plugin for reading your own marginalia by tag.
 - **search every highlight**, not just one tag's — type in the tag box and take
   the pinned row at the top of the list. The escape hatch for when you cannot
   remember which tag you filed something under, and each result carries its own
-  tags, so a hit is also a way back into the tag axis;
+  tags, so a hit is also a way back into the tag axis, and the words you searched
+  for are marked in every result;
 - **`←` `→`** (or `Alt`+arrows) walk back and forward through where you have
   been — tags, searches and collection scopes alike;
 - **Rename** edits the tag in place and calls Zotero's own rename, so it moves every item

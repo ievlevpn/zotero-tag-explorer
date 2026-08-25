@@ -1,6 +1,6 @@
 // Self-check for the pure helpers: `node test.js`.
 const assert = require("assert");
-const { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, matchText, neighbours, matchBooks, bookList, related, dupeClusters, nearMisses, clusterKey, withoutDismissed, groupByBook } = require("./bootstrap.js");
+const { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, markRuns, matchText, neighbours, matchBooks, bookList, related, dupeClusters, nearMisses, clusterKey, withoutDismissed, groupByBook } = require("./bootstrap.js");
 
 assert.ok(fuzzy("", "anything"));
 assert.ok(fuzzy("mdv", "medieval"));
@@ -91,6 +91,18 @@ assert.deepStrictEqual(parseMarkup("</b> alone"), ["</b>", " alone"]);   // clos
 // Malformed but survivable: an unclosed tag just runs to the end.
 assert.deepStrictEqual(parseMarkup("<i>never closed"),
 	[{ tag: "i", kids: ["never closed"] }]);
+
+// Marking the filter's matches inside a string.
+assert.deepStrictEqual(markRuns("the decline of Rome", ["decline"]),
+	["the ", { mark: "decline" }, " of Rome"]);
+assert.deepStrictEqual(markRuns("Rome and rome", ["rome"]),
+	[{ mark: "Rome" }, " and ", { mark: "rome" }]);          // case-insensitive
+assert.deepStrictEqual(markRuns("deeply", ["deep", "epl"]),
+	[{ mark: "deepl" }, "y"]);                               // overlaps merge, never nest
+assert.deepStrictEqual(markRuns("aaa", ["aa"]), [{ mark: "aaa" }]);   // and so do repeats
+assert.deepStrictEqual(markRuns("nothing", []), ["nothing"]);
+assert.deepStrictEqual(markRuns("", ["a"]), []);
+assert.deepStrictEqual(markRuns("x", [""]), ["x"]);          // an empty word marks nothing
 
 // Filtering inside a tag: every word must appear, order does not matter, and it
 // looks in the highlight, the comment and the book title alike.
