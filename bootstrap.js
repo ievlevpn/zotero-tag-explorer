@@ -25,6 +25,8 @@ let loading = null;       // the in-flight buildIndex(), or null
 let win = null;           // the one explorer window
 let scope = null;         // collection id the view is restricted to, or null
 let axis = "tags";        // which list the left pane offers: "tags" | "books"
+let relOpen = false;      // is the related-books list unfolded? remembered
+                          // across books, since it is a density preference
 let view = null;          // what the right pane shows:
                           //   { kind: "tag" | "book" | "find", value }
 
@@ -350,7 +352,12 @@ body { margin:0; height:100vh; display:flex; flex-direction:column;
 .book .nm { font-weight:700; cursor:pointer; }
 .book .nm:hover { text-decoration:underline; }
 .rel { margin:10px 0 2px; }
-.relh { color:GrayText; font-size:11px; margin-bottom:2px; }
+.relh { display:flex; gap:6px; align-items:center; color:GrayText; font-size:11px;
+	margin-bottom:2px; cursor:pointer; user-select:none; width:fit-content; }
+.relh:hover { color:CanvasText; }
+.relh .caret { font-size:9px; width:8px; }
+.relh b { font-weight:400; font-size:10px; padding:0 5px; border-radius:7px;
+	background:color-mix(in srgb, GrayText 20%, Canvas); }
 .rel .row { display:flex; gap:8px; align-items:baseline; padding:2px 6px; border-radius:4px; cursor:pointer; }
 .rel .row b { color:GrayText; font-size:11px; font-weight:400; white-space:nowrap; }
 .rel .row:hover { background:Highlight; color:HighlightText; }
@@ -910,17 +917,31 @@ function build(w) {
 				mine.length > BOOK_TAGS ? `+${mine.length - BOOK_TAGS} more` : null));
 		}
 
+		// Folded by default: the reading pane is for reading, and eight titles
+		// between you and the first highlight is a wall. The count keeps it
+		// advertised, and the fold stays as you left it from book to book.
 		const rel = related(scoped, view.value);
 		if (rel.length) {
 			const box = el(doc, "div", "rel");
-			box.append(el(doc, "div", "relh", "related books"));
+			const caret = el(doc, "span", "caret", relOpen ? "\u25BE" : "\u25B8");
+			const head = el(doc, "div", "relh");
+			head.append(caret, el(doc, "span", null, "related books"),
+				el(doc, "b", null, String(rel.length)));
+			const rows = el(doc, "div");
+			rows.hidden = !relOpen;
+			head.addEventListener("click", () => {
+				relOpen = !relOpen;
+				rows.hidden = !relOpen;
+				caret.textContent = relOpen ? "\u25BE" : "\u25B8";
+			});
+			box.append(head, rows);
 			for (const r of rel) {
 				const row = el(doc, "div", "row");
 				row.title = "Show this book";
 				row.append(bookName(r), el(doc, "b", null,
 					`${r.shared} shared tag${r.shared === 1 ? "" : "s"}`));
 				row.addEventListener("click", () => jumpToBook(r.book));
-				box.append(row);
+				rows.append(row);
 			}
 			right.append(box);
 		}
