@@ -639,10 +639,13 @@ body { margin:0; height:100vh; display:flex; flex-direction:column;
 .book .n { color:GrayText; font-weight:400; font-size:11px; white-space:nowrap; }
 .hl { position:relative; border-left:4px solid var(--c); padding:5px 8px; margin:6px 0;
 	border-radius:0 4px 4px 0; cursor:pointer; background:color-mix(in srgb, var(--c) 10%, Canvas); }
-.hl .copy { position:absolute; top:4px; right:4px; opacity:0; font:11px sans-serif; padding:1px 8px;
-	border:1px solid GrayText; border-radius:5px; background:Canvas; color:CanvasText; cursor:pointer; }
-.hl:hover .copy, .hl .copy:focus { opacity:1; }
-.hl .copy:hover { background:Highlight; color:HighlightText; }
+/* bottom right, and quiet: no border, no fill of its own — it inherits the
+ * card's background so it can sit over the meta line without a box round it */
+.hl .copy { position:absolute; bottom:2px; right:4px; opacity:0; font:10px sans-serif;
+	line-height:1.7; padding:0 4px; border:0; border-radius:4px; background:inherit;
+	color:GrayText; cursor:pointer; }
+.hl:hover .copy { opacity:0.7; }
+.hl .copy:hover, .hl .copy:focus { opacity:1; color:CanvasText; }
 .hl:hover { background:color-mix(in srgb, var(--c) 22%, Canvas); }
 .hl .t { white-space:pre-wrap; }
 /* the UA default is a yellow block with black text, which is unreadable on a
@@ -651,7 +654,8 @@ mark { background:color-mix(in srgb, Highlight 50%, Canvas); color:inherit;
 	border-radius:2px; padding:0 1px; }
 .hl .c { white-space:pre-wrap; margin-top:5px; padding-left:8px; border-left:2px solid GrayText;
 	color:CanvasText; }
-.hl .m { margin-top:5px; color:GrayText; font-size:11px; display:flex; flex-wrap:wrap; gap:5px; align-items:center; }
+.hl .m { margin-top:5px; color:GrayText; font-size:11px; display:flex; flex-wrap:wrap; gap:5px;
+	align-items:center; padding-right:46px; }   /* room for the copy button */
 .hl .m i { font-style:normal; border:1px solid GrayText; border-radius:9px; padding:0 6px; cursor:pointer; }
 .hl .m i:hover { background:Highlight; color:HighlightText; }
 .empty { color:GrayText; padding:30px 0; text-align:center; }
