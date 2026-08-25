@@ -286,8 +286,12 @@ body { margin:0; height:100vh; display:flex; flex-direction:column;
 .near i:hover b { color:HighlightText; }
 .cols { flex:1; min-height:0; display:flex; }
 .left { width:290px; display:flex; flex-direction:column; border-right:1px solid GrayText; }
-.left input { margin:8px; padding:5px 8px; font:13px sans-serif; background:Canvas; color:CanvasText;
+.hunt { display:flex; gap:6px; margin:8px; }
+.hunt input { flex:1; min-width:0; padding:5px 8px; font:13px sans-serif; background:Canvas; color:CanvasText;
 	border:1px solid GrayText; border-radius:5px; }
+.hunt button { display:flex; align-items:center; padding:0 9px; border:1px solid GrayText;
+	border-radius:5px; background:transparent; color:CanvasText; cursor:pointer; }
+.hunt button:hover { background:Highlight; color:HighlightText; }
 .tags { flex:1; overflow:auto; padding:0 4px 8px; }
 .tag { display:flex; gap:8px; align-items:baseline; padding:3px 6px; border-radius:4px; cursor:pointer; }
 .tag span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -357,6 +361,26 @@ function marked(doc, tag, cls, str) {
 	const node = el(doc, tag, cls);
 	node.append(markup(doc, str));
 	return node;
+}
+
+// Drawn rather than typed: the die characters (U+2680..2685) are absent from
+// plenty of system font stacks and come out as an empty box.
+function dieIcon(doc) {
+	const ns = "http://www.w3.org/2000/svg";
+	const node = (tag, attrs) => {
+		const n = doc.createElementNS(ns, tag);
+		for (const k in attrs) n.setAttribute(k, String(attrs[k]));
+		return n;
+	};
+	const icon = node("svg", { viewBox: "0 0 16 16", width: 13, height: 13, fill: "currentColor" });
+	icon.append(node("rect", {
+		x: 1.6, y: 1.6, width: 12.8, height: 12.8, rx: 3,
+		fill: "none", stroke: "currentColor", "stroke-width": 1.4,
+	}));
+	for (const [cx, cy] of [[5.2, 5.2], [8, 8], [10.8, 10.8]]) {
+		icon.append(node("circle", { cx, cy, r: 1.3 }));
+	}
+	return icon;
 }
 
 function open(collection) {
@@ -509,7 +533,22 @@ function build(w) {
 	search.placeholder = "Search tags…";
 	const tags = el(doc, "div", "tags");
 	const left = el(doc, "div", "left");
-	left.append(search, tags);
+	// Two thirds of the tags in a well-used library have been used exactly once,
+	// which puts them past the end of every sorted list. A die is the only thing
+	// that ever surfaces them. It draws from what is listed, so a search and a
+	// collection both narrow the roll.
+	const die = el(doc, "button");
+	die.append(dieIcon(doc));
+	die.title = "Show a random tag from this list";
+	die.addEventListener("click", () => {
+		if (!visible.length) return;
+		pick(visible[Math.floor(Math.random() * visible.length)].tag);
+		const on = tags.querySelector(".tag.on");
+		if (on) on.scrollIntoView({ block: "nearest" });
+	});
+	const hunt = el(doc, "div", "hunt");
+	hunt.append(search, die);
+	left.append(hunt, tags);
 	const right = el(doc, "div", "right");
 	const cols = el(doc, "div", "cols");
 	cols.append(left, right);

@@ -36,6 +36,10 @@ A Zotero 10 plugin for reading your own marginalia by tag.
   already in use, Zotero would silently merge the two, so the plugin stops and
   says how many items the other tag is on; merging then takes a second,
   deliberate click;
+- a **die** beside the search box rolls a random tag. Two thirds of the tags in
+  a well-used library have been used exactly once, which puts them past the end
+  of every sorted list; this is the only thing that ever surfaces them. It draws
+  from what is currently listed, so a search or a collection narrows the roll;
 - **appears with** — the tags that share a highlight with this one, strongest
   link first, each one clickable. Your tags already form a graph; this is the
   first thing that shows it to you;
