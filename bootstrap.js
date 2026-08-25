@@ -22,6 +22,9 @@ let collectionMenuID = null;
 let entries = [];         // every tagged annotation — see buildIndex()
 let counts = [];          // [{ tag, n }] for the current scope, best first
 let dismissed = [];       // [[name, name, …]] you have said are not duplicates
+let libTags = [];         // [{ tag, n, libs }] every tag in the library, with how
+                          // many items carry it — a merge moves items, not
+                          // highlights, and reaches tags no annotation has
 let dupes = [];           // clusters of the same tag spelled differently
 let nears = [];           // one-letter neighbours worth a second look
 let loading = null;       // the in-flight buildIndex(), or null
@@ -205,17 +208,22 @@ function groupByBook(list) {
 
 // --- duplicate tags ---------------------------------------------------------
 
-// Punctuation is deliberately left alone. In these libraries it carries
-// meaning — "condition D' (EVT)" is not "condition D (EVT)", "T^+" is not "T" —
-// and stripping it also collapses every punctuation-only tag ("!", "?", "\\")
-// onto the empty string.
+// Only separators fold. Hyphens, dashes and underscores are how one writer
+// spells a space ("machine learning" / "machine-learning", "Cameron-Martin" /
+// "Cameron–Martin"), so those are the same tag. Everything else punctuation
+// does is left alone, because it carries meaning — "condition D' (EVT)" is not
+// "condition D (EVT)", "T^+ (regularity structures)" is not "T (regularity
+// structures)" — and stripping it wholesale also collapses every
+// punctuation-only tag ("!", "?", "\\") onto the empty string.
 const squash = (t) => t.normalize("NFC").trim().replace(/\s+/g, " ");
 const fold = (t) => squash(t).toLowerCase();
-const stem = (t) => fold(t).replace(/s$/, "");
+const loose = (t) => fold(t).replace(/[-\u2010-\u2015_]+/g, " ").replace(/\s+/g, " ").trim();
+const stem = (t) => loose(t).replace(/s$/, "");
 
 function why(tags) {
 	if (new Set(tags.map((t) => t.toLowerCase())).size === 1) return "capitalisation";
 	if (new Set(tags.map(fold)).size === 1) return "spacing";
+	if (new Set(tags.map(loose)).size === 1) return "hyphenation";
 	return "singular and plural";
 }
 
@@ -395,16 +403,37 @@ async function buildIndex() {
 		});
 	}
 	entries = out;
+	await loadLibraryTags();
 }
 
 const inScope = (e) => !scope || e.colls.has(scope);
+
+// Duplicate hunting looks at the whole library, not at the annotation index:
+// renaming a tag moves every item carrying it, so a pair like "Entropy"/"entropy"
+// that lives only on books is exactly as much a duplicate as one on highlights.
+async function loadLibraryTags() {
+	const rows = await Zotero.DB.queryAsync(
+		"SELECT t.name AS tag, i.libraryID AS lib, COUNT(*) AS n "
+		+ "FROM itemTags it JOIN tags t ON t.tagID = it.tagID "
+		+ "JOIN items i ON i.itemID = it.itemID "
+		+ "LEFT JOIN deletedItems d ON d.itemID = it.itemID "
+		+ "WHERE d.itemID IS NULL GROUP BY t.name, i.libraryID");
+	const m = new Map();
+	for (const r of rows) {
+		let t = m.get(r.tag);
+		if (!t) m.set(r.tag, t = { tag: r.tag, n: 0, libs: new Set() });
+		t.n += r.n;
+		t.libs.add(r.lib);
+	}
+	libTags = [...m.values()];
+}
 
 function rescope() {
 	counts = tagCounts(entries.filter(inScope));
 	// Here rather than in the render: this runs on a scope change or a merge,
 	// not on every keystroke.
-	dupes = withoutDismissed(dupeClusters(counts), dismissed);
-	nears = withoutDismissed(nearMisses(counts), dismissed);
+	dupes = withoutDismissed(dupeClusters(libTags), dismissed);
+	nears = withoutDismissed(nearMisses(libTags), dismissed);
 	if (!view) return;
 	// A view that the new scope has emptied is not a view any more.
 	if (view.kind === "tag" && !counts.some((c) => c.tag === view.value)) view = null;
@@ -1139,8 +1168,8 @@ function build(w) {
 		const merges = dupes.reduce((k, c) => k + c.tags.length - 1, 0);
 		right.append(el(doc, "div", "sub", dupes.length || nears.length
 			? `${dupes.length} cluster${dupes.length === 1 ? "" : "s"} \u00B7 ${merges} merge${merges === 1 ? "" : "s"}`
-				+ ` \u00B7 from ${counts.length} tags`
-			: `nothing left to merge among ${counts.length} tags`));
+				+ ` \u00B7 from ${libTags.length} tags across the whole library`
+			: `nothing left to merge among ${libTags.length} tags`));
 
 		if (dupes.length) {
 			right.append(section("Same tag, spelled differently", "safe to merge"));
@@ -1235,7 +1264,8 @@ function build(w) {
 	async function mergeCluster(c, keep, box) {
 		for (const t of c.tags) {
 			if (t.tag === keep) continue;
-			const libs = new Set(entries.filter((e) => e.tags.includes(t.tag)).map((e) => e.libraryID));
+			const known = libTags.find((x) => x.tag === t.tag);
+			const libs = known ? known.libs : new Set();
 			try {
 				for (const lib of libs) await Zotero.Tags.rename(lib, t.tag, keep);
 			} catch (e) {
@@ -1244,6 +1274,7 @@ function build(w) {
 			}
 			renameInList(entries, t.tag, keep, libs);
 		}
+		await loadLibraryTags();
 		rescope();
 		countLabel.textContent = summary();
 		renderLeft();

@@ -141,6 +141,22 @@ assert.deepStrictEqual(d.map((c) => [c.why, c.tags.map((t) => t.tag)]), [
 	["singular and plural", ["rough path", "rough paths"]],
 ]);
 
+// Hyphens, dashes and underscores are just someone else's space.
+const hy = dupeClusters([
+	tag("machine learning", 6), tag("machine-learning", 1),
+	tag("Cameron-Martin theorem", 5), tag("Cameron\u2013Martin theorem", 1),
+	tag("read", 561), tag("_read", 1),
+	tag("2-correlator", 6), tag("4-correlator", 3),        // digits differ: not the same tag
+	tag("condition D' (EVT)", 3), tag("condition D (EVT)", 2),   // an apostrophe is not a separator
+	tag("T^+ (regularity structures)", 3), tag("T (regularity structures)", 1),
+]);
+assert.deepStrictEqual(hy.map((c) => c.tags.map((t) => t.tag)), [
+	["read", "_read"],
+	["machine learning", "machine-learning"],
+	["Cameron-Martin theorem", "Cameron\u2013Martin theorem"],
+]);
+assert.strictEqual(hy[1].why, "hyphenation");
+
 // Spacing and NFC differences fold; the most used spelling leads.
 const sp = dupeClusters([tag("rough  path", 1), tag("rough path", 9)]);
 assert.deepStrictEqual(sp[0].tags.map((t) => t.tag), ["rough path", "rough  path"]);

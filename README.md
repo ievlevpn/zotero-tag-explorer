@@ -48,9 +48,14 @@ A Zotero 10 plugin for reading your own marginalia by tag.
   book to book;
 - a **die** beside the search box rolls a random tag, or a random book;
 - **possible duplicates** — a review list of tags that are the same tag written
-  two ways. Only folds that cannot change meaning are treated as safe
-  (capitalisation, spacing, a trailing plural); punctuation is left alone
-  because in a maths library `condition D'` is not `condition D`. A second
+  two ways, over **every tag in the library**, not just the ones on highlights:
+  renaming moves every item carrying a tag, so a pair like `Entropy`/`entropy`
+  living only on books counts too. Only folds that cannot change meaning are
+  treated as safe — capitalisation, spacing, a trailing plural, and separators,
+  since a hyphen is just somebody else's space (`machine learning` /
+  `machine-learning`, `Cameron-Martin` / `Cameron–Martin`). Other punctuation is
+  left alone, because in a maths library `condition D'` is not `condition D` and
+  `T^+` is not `T`. A second
   section offers one-letter neighbours, which are *usually not* duplicates —
   `2-correlator`/`4-correlator`, `Кант`/`Конт` — so those arrive with nothing
   selected and the merge button disabled until you choose a survivor.
