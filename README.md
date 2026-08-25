@@ -53,7 +53,10 @@ A Zotero 10 plugin for reading your own marginalia by tag.
   because in a maths library `condition D'` is not `condition D`. A second
   section offers one-letter neighbours, which are *usually not* duplicates —
   `2-correlator`/`4-correlator`, `Кант`/`Конт` — so those arrive with nothing
-  selected and the merge button disabled until you choose a survivor. Two thirds of the tags in
+  selected and the merge button disabled until you choose a survivor.
+  **Not duplicates** dismisses a suggestion for good; the list is kept in a
+  Zotero pref, so it survives restarts and plugin updates, and a footer lets you
+  show what you dismissed and put any of it back. Two thirds of the tags in
   a well-used library have been used exactly once, which puts them past the end
   of every sorted list; this is the only thing that ever surfaces them. It draws
   from what is currently listed, so a search or a collection narrows the roll;

@@ -1,6 +1,6 @@
 // Self-check for the pure helpers: `node test.js`.
 const assert = require("assert");
-const { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, matchText, neighbours, matchBooks, bookList, related, dupeClusters, nearMisses, groupByBook } = require("./bootstrap.js");
+const { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, matchText, neighbours, matchBooks, bookList, related, dupeClusters, nearMisses, clusterKey, withoutDismissed, groupByBook } = require("./bootstrap.js");
 
 assert.ok(fuzzy("", "anything"));
 assert.ok(fuzzy("mdv", "medieval"));
@@ -155,6 +155,22 @@ const near = nearMisses([
 ]);
 assert.deepStrictEqual(near.map((c) => c.tags.map((t) => t.tag)),
 	[["Берггольц, Ольга", "Берргольц, Ольга"]]);
+
+// Dismissing a cluster: identified by exactly which names are in it.
+assert.strictEqual(clusterKey(["b", "a"]), clusterKey(["a", "b"]));          // order-free
+assert.notStrictEqual(clusterKey(["a", "b"]), clusterKey(["a", "b", "c"]));  // a new member is new
+
+const three = [
+	{ why: "capitalisation", tags: [tag("White noise", 3), tag("white noise", 1)] },
+	{ why: "one letter", tags: [tag("2-correlator", 6), tag("6-correlator", 1)] },
+];
+assert.strictEqual(withoutDismissed(three, []).length, 2);
+assert.deepStrictEqual(
+	withoutDismissed(three, [["6-correlator", "2-correlator"]]).map((c) => c.tags[0].tag),
+	["White noise"]);
+// A dismissed pair does not silence a bigger cluster that contains it.
+assert.strictEqual(withoutDismissed(
+	[{ why: "x", tags: [tag("a", 1), tag("b", 1), tag("c", 1)] }], [["a", "b"]]).length, 1);
 
 // One block per book, highlights inside it in reading order.
 const books = groupByBook(list);

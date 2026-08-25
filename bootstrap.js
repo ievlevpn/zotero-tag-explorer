@@ -21,6 +21,7 @@ let collectionMenuID = null;
 
 let entries = [];         // every tagged annotation — see buildIndex()
 let counts = [];          // [{ tag, n }] for the current scope, best first
+let dismissed = [];       // [[name, name, …]] you have said are not duplicates
 let dupes = [];           // clusters of the same tag spelled differently
 let nears = [];           // one-letter neighbours worth a second look
 let loading = null;       // the in-flight buildIndex(), or null
@@ -32,10 +33,22 @@ let relOpen = false;      // is the related-books list unfolded? remembered
 let view = null;          // what the right pane shows:
                           //   { kind: "tag" | "book" | "find", value }
 
+const DISMISS_PREF = "tagExplorer.notDuplicates";
+
 const oops = (e) => Zotero.logError(e);
 
 function safe(fn, fallback) {
 	try { return fn(); } catch (e) { oops(e); return fallback; }
+}
+
+// Zotero's prefs outlive restarts and plugin upgrades, which is all this needs.
+function loadDismissed() {
+	const saved = safe(() => JSON.parse(Zotero.Prefs.get(DISMISS_PREF) || "[]"), []);
+	dismissed = Array.isArray(saved) ? saved.filter(Array.isArray) : [];
+}
+
+function saveDismissed() {
+	safe(() => Zotero.Prefs.set(DISMISS_PREF, JSON.stringify(dismissed)));
 }
 
 
@@ -269,6 +282,16 @@ function nearMisses(counts, minLength = 8, established = 3) {
 		.sort((a, b) => sum(b.tags) - sum(a.tags) || a.tags[0].tag.localeCompare(b.tags[0].tag));
 }
 
+// A cluster is identified by exactly which names are in it. Add a fourth
+// spelling later and it is a new cluster, worth asking about again.
+const clusterKey = (names) => names.slice().sort().join("\u0000");
+const namesOf = (c) => c.tags.map((t) => t.tag);
+
+function withoutDismissed(clusters, dismissed) {
+	const skip = new Set(dismissed.map(clusterKey));
+	return clusters.filter((c) => !skip.has(clusterKey(namesOf(c))));
+}
+
 // The second axis: every book with highlights here, most marked first.
 function bookList(rows) {
 	const m = new Map();
@@ -380,8 +403,8 @@ function rescope() {
 	counts = tagCounts(entries.filter(inScope));
 	// Here rather than in the render: this runs on a scope change or a merge,
 	// not on every keystroke.
-	dupes = dupeClusters(counts);
-	nears = nearMisses(counts);
+	dupes = withoutDismissed(dupeClusters(counts), dismissed);
+	nears = withoutDismissed(nearMisses(counts), dismissed);
 	if (!view) return;
 	// A view that the new scope has emptied is not a view any more.
 	if (view.kind === "tag" && !counts.some((c) => c.tag === view.value)) view = null;
@@ -425,6 +448,9 @@ body { margin:0; height:100vh; display:flex; flex-direction:column;
 .sect { display:flex; align-items:baseline; gap:8px; margin:18px 0 2px; }
 .sect h2 { font-size:12px; margin:0; }
 .sect span { color:GrayText; font-size:11px; }
+.sect button { font:11px sans-serif; padding:1px 9px; border:1px solid GrayText; border-radius:5px;
+	background:transparent; color:CanvasText; cursor:pointer; }
+.sect button:hover { background:Highlight; color:HighlightText; }
 .dupe { border:1px solid color-mix(in srgb, GrayText 40%, Canvas); border-radius:6px;
 	padding:7px 10px 8px; margin:8px 0; }
 .dupe.maybe { border-style:dashed; }
@@ -755,6 +781,7 @@ function build(w) {
 
 	let visible = [];   // whatever the left list currently offers — tags or books
 	let hlQuery = "";   // the filter over the highlights on the right
+	let showDismissed = false;
 	let trail = [];     // where you have been: { scope, axis, view, q }
 	let hIndex = -1;
 
@@ -1124,6 +1151,34 @@ function build(w) {
 				"check before merging \u2014 some of these are meant to differ"));
 			for (const c of nears) right.append(dupeBlock(c, true));
 		}
+		if (dismissed.length) {
+			// Dismissing has to be undoable, or it is a door that only shuts.
+			const foot = section(`${dismissed.length} marked not duplicates`, "");
+			const toggle = el(doc, "button", null, showDismissed ? "hide" : "show");
+			toggle.addEventListener("click", () => { showDismissed = !showDismissed; renderRight(); });
+			foot.append(toggle);
+			right.append(foot);
+			if (showDismissed) for (const names of dismissed) right.append(dismissedBlock(names));
+		}
+	}
+
+	function dismissedBlock(names) {
+		const box = el(doc, "div", "dupe maybe");
+		const undo = el(doc, "button", null, "Suggest again");
+		undo.addEventListener("click", () => {
+			const key = clusterKey(names);
+			dismissed = dismissed.filter((d) => clusterKey(d) !== key);
+			saveDismissed();
+			rescope();
+			renderLeft();
+			renderRight();
+		});
+		const top = el(doc, "div", "top");
+		top.append(el(doc, "span", "why", "not duplicates"), undo);
+		const opts = el(doc, "div", "opts");
+		for (const n of names) opts.append(el(doc, "label", null, n));
+		box.append(top, opts);
+		return box;
 	}
 
 	function section(head, note) {
@@ -1144,9 +1199,19 @@ function build(w) {
 		go.disabled = !keep;
 		go.addEventListener("click", () => keep && mergeCluster(c, keep, box));
 
+		const no = el(doc, "button", null, "Not duplicates");
+		no.title = "Never suggest these again";
+		no.addEventListener("click", () => {
+			dismissed.push(namesOf(c));
+			saveDismissed();
+			rescope();
+			renderLeft();
+			renderRight();
+		});
+
 		const top = el(doc, "div", "top");
 		top.append(el(doc, "span", "why",
-			(maybe ? "worth a look \u2014 " : "") + "differ by " + c.why), go);
+			(maybe ? "worth a look \u2014 " : "") + "differ by " + c.why), no, go);
 		box.append(top);
 
 		const opts = el(doc, "div", "opts");
@@ -1325,6 +1390,7 @@ function build(w) {
 // startup() in sequence inside its own init, so anything slow here delays the
 // launch. The index is built the first time the window is opened.
 function startup({ id }) {
+	loadDismissed();
 	menuID = Zotero.MenuManager.registerMenu({
 		menuID: "tag-explorer",
 		pluginID: id,
@@ -1378,5 +1444,5 @@ function uninstall() {}
 
 // node-only: lets test.js import the pure helpers; no-op inside Zotero.
 if (typeof module !== "undefined") {
-	module.exports = { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, matchText, neighbours, matchBooks, bookList, related, dupeClusters, nearMisses, groupByBook };
+	module.exports = { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, matchText, neighbours, matchBooks, bookList, related, dupeClusters, nearMisses, clusterKey, withoutDismissed, groupByBook };
 }
