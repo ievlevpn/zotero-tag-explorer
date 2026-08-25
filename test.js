@@ -1,6 +1,6 @@
 // Self-check for the pure helpers: `node test.js`.
 const assert = require("assert");
-const { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, matchText, neighbours, matchBooks, bookList, related, groupByBook } = require("./bootstrap.js");
+const { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, matchText, neighbours, matchBooks, bookList, related, dupeClusters, nearMisses, groupByBook } = require("./bootstrap.js");
 
 assert.ok(fuzzy("", "anything"));
 assert.ok(fuzzy("mdv", "medieval"));
@@ -122,6 +122,39 @@ assert.deepStrictEqual(neighbours(graph, "Weber"), [{ tag: "iron cage", n: 1 }])
 assert.deepStrictEqual(neighbours(graph, "iron cage"), [{ tag: "Weber", n: 1 }]);
 assert.deepStrictEqual(neighbours(graph, "nobody"), []);          // a tag with no company
 assert.strictEqual(neighbours(graph, "Arendt", 1).length, 1);     // honours the limit
+
+// --- duplicate tags ------------------------------------------------------
+const tag = (t, n) => ({ tag: t, n });
+
+const d = dupeClusters([
+	tag("White noise", 3), tag("white noise", 1),
+	tag("rough path", 2), tag("rough paths", 1),
+	tag("limit theorem", 2), tag("Limit Theorems", 1),
+	tag("!", 108), tag("?", 4), tag("\\", 1),            // punctuation is never folded away
+	tag("condition D' (EVT)", 3), tag("condition D (EVT)", 2),
+	tag("Кант", 18), tag("Конт", 2),                  // one letter, different philosophers
+	tag("alone", 5),
+]);
+assert.deepStrictEqual(d.map((c) => [c.why, c.tags.map((t) => t.tag)]), [
+	["capitalisation", ["White noise", "white noise"]],
+	["singular and plural", ["limit theorem", "Limit Theorems"]],
+	["singular and plural", ["rough path", "rough paths"]],
+]);
+
+// Spacing and NFC differences fold; the most used spelling leads.
+const sp = dupeClusters([tag("rough  path", 1), tag("rough path", 9)]);
+assert.deepStrictEqual(sp[0].tags.map((t) => t.tag), ["rough path", "rough  path"]);
+assert.strictEqual(sp[0].why, "spacing");
+
+// Near misses: long enough, and one side used once against an established one.
+const near = nearMisses([
+	tag("Берггольц, Ольга", 9), tag("Берргольц, Ольга", 1),   // a real typo
+	tag("ref", 297), tag("rem", 1),                          // too short to judge
+	tag("национализм", 9), tag("рационализм", 4),            // both established: not offered
+	tag("White noise", 3), tag("white noise", 1),            // dupeClusters' job, not this one
+]);
+assert.deepStrictEqual(near.map((c) => c.tags.map((t) => t.tag)),
+	[["Берггольц, Ольга", "Берргольц, Ольга"]]);
 
 // One block per book, highlights inside it in reading order.
 const books = groupByBook(list);

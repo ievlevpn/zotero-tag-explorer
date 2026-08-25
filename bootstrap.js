@@ -21,6 +21,8 @@ let collectionMenuID = null;
 
 let entries = [];         // every tagged annotation — see buildIndex()
 let counts = [];          // [{ tag, n }] for the current scope, best first
+let dupes = [];           // clusters of the same tag spelled differently
+let nears = [];           // one-letter neighbours worth a second look
 let loading = null;       // the in-flight buildIndex(), or null
 let win = null;           // the one explorer window
 let scope = null;         // collection id the view is restricted to, or null
@@ -188,6 +190,85 @@ function groupByBook(list) {
 	return out;
 }
 
+// --- duplicate tags ---------------------------------------------------------
+
+// Punctuation is deliberately left alone. In these libraries it carries
+// meaning — "condition D' (EVT)" is not "condition D (EVT)", "T^+" is not "T" —
+// and stripping it also collapses every punctuation-only tag ("!", "?", "\\")
+// onto the empty string.
+const squash = (t) => t.normalize("NFC").trim().replace(/\s+/g, " ");
+const fold = (t) => squash(t).toLowerCase();
+const stem = (t) => fold(t).replace(/s$/, "");
+
+function why(tags) {
+	if (new Set(tags.map((t) => t.toLowerCase())).size === 1) return "capitalisation";
+	if (new Set(tags.map(fold)).size === 1) return "spacing";
+	return "singular and plural";
+}
+
+// Tags that are the same tag written differently. Only the folds that cannot
+// change meaning, so every cluster here is safe to merge.
+function dupeClusters(counts) {
+	const g = new Map();
+	for (const c of counts) {
+		const key = stem(c.tag);
+		if (!key) continue;                       // a tag of pure punctuation is its own thing
+		if (!g.has(key)) g.set(key, []);
+		g.get(key).push(c);
+	}
+	return [...g.values()].filter((v) => v.length > 1)
+		.map((v) => {
+			const tags = v.slice().sort((a, b) => b.n - a.n || a.tag.localeCompare(b.tag));
+			return { why: why(tags.map((t) => t.tag)), tags };
+		})
+		.sort((a, b) => sum(b.tags) - sum(a.tags) || a.tags[0].tag.localeCompare(b.tags[0].tag));
+}
+
+const sum = (tags) => tags.reduce((k, t) => k + t.n, 0);
+
+// One typo apart — and almost always not a typo. Systematically named tags sit
+// one letter from each other on purpose ("2-correlator"/"4-correlator",
+// "XII век"/"XIV век", "Кант"/"Конт"), so two guards do the work: the names must
+// be long enough that one letter is a small share of them, and one must be used
+// once while the other is established. That turns 73 guesses into a handful.
+function nearMisses(counts, minLength = 8, established = 3) {
+	const by = new Map();
+	for (const c of counts) by.set(c.tag, c.n);
+	const buckets = new Map();
+	const add = (k, t) => {
+		if (!buckets.has(k)) buckets.set(k, new Set());
+		buckets.get(k).add(t);
+	};
+	for (const c of counts) {
+		if (c.tag.length < minLength) continue;
+		const low = fold(c.tag);
+		add(low, c.tag);
+		for (let i = 0; i < low.length; i++) add(low.slice(0, i) + "\u0000" + low.slice(i + 1), c.tag);
+	}
+	const out = new Map();
+	for (const set of buckets.values()) {
+		if (set.size < 2) continue;
+		const list = [...set];
+		for (let i = 0; i < list.length; i++) {
+			for (let j = i + 1; j < list.length; j++) {
+				const a = list[i], b = list[j];
+				if (Math.abs(a.length - b.length) > 1) continue;
+				if (stem(a) === stem(b)) continue;          // dupeClusters already has it
+				const lo = Math.min(by.get(a), by.get(b));
+				const hi = Math.max(by.get(a), by.get(b));
+				if (lo !== 1 || hi < established) continue;
+				const key = [a, b].sort().join("\u0000");
+				if (!out.has(key)) {
+					out.set(key, { why: "one letter", tags: [{ tag: a, n: by.get(a) }, { tag: b, n: by.get(b) }]
+						.sort((x, y) => y.n - x.n) });
+				}
+			}
+		}
+	}
+	return [...out.values()]
+		.sort((a, b) => sum(b.tags) - sum(a.tags) || a.tags[0].tag.localeCompare(b.tags[0].tag));
+}
+
 // The second axis: every book with highlights here, most marked first.
 function bookList(rows) {
 	const m = new Map();
@@ -297,6 +378,10 @@ const inScope = (e) => !scope || e.colls.has(scope);
 
 function rescope() {
 	counts = tagCounts(entries.filter(inScope));
+	// Here rather than in the render: this runs on a scope change or a merge,
+	// not on every keystroke.
+	dupes = dupeClusters(counts);
+	nears = nearMisses(counts);
 	if (!view) return;
 	// A view that the new scope has emptied is not a view any more.
 	if (view.kind === "tag" && !counts.some((c) => c.tag === view.value)) view = null;
@@ -335,8 +420,25 @@ body { margin:0; height:100vh; display:flex; flex-direction:column;
 .head button.step { font:12px sans-serif; padding:3px 8px; min-width:28px; }
 .head button.step:disabled { color:GrayText; border-color:color-mix(in srgb, GrayText 40%, Canvas);
 	cursor:default; background:transparent; }
-.tag.all { color:GrayText; font-style:italic; }
-.tag.all.on { color:HighlightText; }
+.tag.all, .tag.dup { color:GrayText; font-style:italic; }
+.tag.all.on, .tag.dup.on { color:HighlightText; }
+.sect { display:flex; align-items:baseline; gap:8px; margin:18px 0 2px; }
+.sect h2 { font-size:12px; margin:0; }
+.sect span { color:GrayText; font-size:11px; }
+.dupe { border:1px solid color-mix(in srgb, GrayText 40%, Canvas); border-radius:6px;
+	padding:7px 10px 8px; margin:8px 0; }
+.dupe.maybe { border-style:dashed; }
+.dupe .top { display:flex; align-items:center; gap:10px; }
+.dupe .why { flex:1; min-width:0; color:GrayText; font-size:11px; }
+.dupe.maybe .why { font-style:italic; }
+.dupe button { font:11px sans-serif; padding:2px 10px; border:1px solid GrayText;
+	border-radius:5px; background:transparent; color:CanvasText; cursor:pointer; white-space:nowrap; }
+.dupe button:hover:not(:disabled) { background:Highlight; color:HighlightText; }
+.dupe button:disabled { color:GrayText; border-color:color-mix(in srgb, GrayText 40%, Canvas); cursor:default; }
+.dupe .opts { display:flex; flex-wrap:wrap; gap:6px 18px; margin-top:5px; }
+.dupe label { display:flex; align-items:center; gap:6px; cursor:pointer; }
+.dupe label b { font-weight:400; font-size:10px; color:GrayText;
+	background:color-mix(in srgb, GrayText 20%, Canvas); border-radius:7px; padding:0 5px; }
 .near { display:flex; flex-wrap:wrap; gap:5px; align-items:center; margin:8px 0 2px; }
 .near > span { color:GrayText; font-size:11px; margin-right:2px; }
 .near i { font-style:normal; font-size:12px; border:1px solid GrayText; border-radius:9px;
@@ -758,6 +860,14 @@ function build(w) {
 	function renderTagRows() {
 		const q = search.value.trim();
 		visible = matchTags(counts, search.value);
+		// A browsing affordance, so it stays out of the way once you are typing.
+		if (!q && (dupes.length || nears.length)) {
+			const row = el(doc, "div", "tag dup" + (view && view.kind === "dupes" ? " on" : ""));
+			row.append(el(doc, "span", null, "possible duplicates"),
+				el(doc, "b", null, String(dupes.length + nears.length)));
+			row.addEventListener("click", () => show({ kind: "dupes" }));
+			listBox.append(row);
+		}
 		// Pinned above the matches, and deliberately not one of them: the tag
 		// vocabulary is not the only way in, and when most tags have been used
 		// once it is often not the way at all.
@@ -898,6 +1008,7 @@ function build(w) {
 			right.append(el(doc, "div", "empty", "Pick a tag or a book."));
 			return;
 		}
+		if (view.kind === "dupes") return renderDupes();
 		if (view.kind === "find") return renderFound();
 		if (view.kind === "book") return renderBook();
 		return renderTag();
@@ -992,6 +1103,86 @@ function build(w) {
 			`${rows.length} highlight${rows.length === 1 ? "" : "s"} anywhere in your library`
 			+ (scope ? ", in this collection" : "")));
 		right.append(listOf(rows, false).list);
+	}
+
+	function renderDupes() {
+		const title = el(doc, "div", "title");
+		title.append(el(doc, "h1", null, "Possible duplicates"));
+		right.append(title);
+		const merges = dupes.reduce((k, c) => k + c.tags.length - 1, 0);
+		right.append(el(doc, "div", "sub", dupes.length || nears.length
+			? `${dupes.length} cluster${dupes.length === 1 ? "" : "s"} \u00B7 ${merges} merge${merges === 1 ? "" : "s"}`
+				+ ` \u00B7 from ${counts.length} tags`
+			: `nothing left to merge among ${counts.length} tags`));
+
+		if (dupes.length) {
+			right.append(section("Same tag, spelled differently", "safe to merge"));
+			for (const c of dupes) right.append(dupeBlock(c, false));
+		}
+		if (nears.length) {
+			right.append(section("Near misses",
+				"check before merging \u2014 some of these are meant to differ"));
+			for (const c of nears) right.append(dupeBlock(c, true));
+		}
+	}
+
+	function section(head, note) {
+		const box = el(doc, "div", "sect");
+		box.append(el(doc, "h2", null, head), el(doc, "span", null, note));
+		return box;
+	}
+
+	let groupN = 0;
+
+	// One cluster: which spelling survives, and the button that does it. The
+	// safe ones arrive with the most-used spelling chosen; the near misses
+	// arrive with nothing chosen, so the merge cannot happen by reflex.
+	function dupeBlock(c, maybe) {
+		const box = el(doc, "div", "dupe" + (maybe ? " maybe" : ""));
+		const go = el(doc, "button", null, maybe ? "Merge\u2026" : "Merge");
+		let keep = maybe ? null : c.tags[0].tag;
+		go.disabled = !keep;
+		go.addEventListener("click", () => keep && mergeCluster(c, keep, box));
+
+		const top = el(doc, "div", "top");
+		top.append(el(doc, "span", "why",
+			(maybe ? "worth a look \u2014 " : "") + "differ by " + c.why), go);
+		box.append(top);
+
+		const opts = el(doc, "div", "opts");
+		const group = "dupe" + (groupN++);
+		for (const [i, t] of c.tags.entries()) {
+			const lab = el(doc, "label");
+			const radio = doc.createElement("input");
+			radio.type = "radio";
+			radio.name = group;
+			radio.checked = !maybe && i === 0;
+			radio.addEventListener("change", () => { keep = t.tag; go.disabled = false; });
+			lab.append(radio, el(doc, "span", null, t.tag), el(doc, "b", null, String(t.n)));
+			opts.append(lab);
+		}
+		box.append(opts);
+		return box;
+	}
+
+	// Every other spelling renamed onto the survivor. No merge warning here —
+	// absorbing them is the whole point, and the counts are on screen.
+	async function mergeCluster(c, keep, box) {
+		for (const t of c.tags) {
+			if (t.tag === keep) continue;
+			const libs = new Set(entries.filter((e) => e.tags.includes(t.tag)).map((e) => e.libraryID));
+			try {
+				for (const lib of libs) await Zotero.Tags.rename(lib, t.tag, keep);
+			} catch (e) {
+				oops(e);
+				return box.append(el(doc, "div", "err", `Could not merge: ${e.message}`));
+			}
+			renameInList(entries, t.tag, keep, libs);
+		}
+		rescope();
+		countLabel.textContent = summary();
+		renderLeft();
+		renderRight();
 	}
 
 	function startRename(title) {
@@ -1187,5 +1378,5 @@ function uninstall() {}
 
 // node-only: lets test.js import the pure helpers; no-op inside Zotero.
 if (typeof module !== "undefined") {
-	module.exports = { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, matchText, neighbours, matchBooks, bookList, related, groupByBook };
+	module.exports = { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, matchText, neighbours, matchBooks, bookList, related, dupeClusters, nearMisses, groupByBook };
 }
