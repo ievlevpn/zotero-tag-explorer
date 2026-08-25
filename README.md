@@ -69,13 +69,19 @@ A Zotero 10 plugin for reading your own marginalia by tag.
   link first, each one clickable. Your tags already form a graph; this is the
   first thing that shows it to you;
 - the other tags on a highlight are chips: click one to jump to it;
-- click a highlight to open the reader on it.
+- click a highlight to open the reader on it, or **Copy** it — the quote, where
+  it came from and your comment, ready to paste into what you are writing.
 
 Right-clicking a collection in the library offers **Explore Tags in This
 Collection…**, which opens the same window already restricted.
 
 `↓` `↑` `Enter` move through the tag list from the search box, and through
-the collection list from the collection box. `Esc` closes.
+the collection list from the collection box. `/` or `⌘F` jumps back to the
+search box from anywhere. `Esc` peels one layer at a time — the highlight
+filter, then the tag search, then the window.
+
+The window reopens where you left it: same size, same place on screen, same tag
+or book you were reading.
 
 ## What it looks like
 

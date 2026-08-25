@@ -1,7 +1,7 @@
 {
 	"manifest_version": 2,
 	"name": "Tag Explorer",
-	"version": "0.8.2",
+	"version": "0.9.0",
 	"description": "Browse your annotation tags: fuzzy-search every tag, read the highlights and comments behind it, restricted to a collection if you like.",
 	"author": "Pavel Ievlev",
 	"icons": {

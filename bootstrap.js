@@ -37,6 +37,7 @@ let view = null;          // what the right pane shows:
                           //   { kind: "tag" | "book" | "find", value }
 
 const DISMISS_PREF = "tagExplorer.notDuplicates";
+const STATE_PREF = "tagExplorer.state";     // window geometry and where you were
 
 const oops = (e) => Zotero.logError(e);
 
@@ -52,6 +53,41 @@ function loadDismissed() {
 
 function saveDismissed() {
 	safe(() => Zotero.Prefs.set(DISMISS_PREF, JSON.stringify(dismissed)));
+}
+
+// Where the window was and what you were reading. A tool you dip into twenty
+// times a day should not start from nothing each time.
+let geometry = null;
+
+function loadState() {
+	const was = safe(() => JSON.parse(Zotero.Prefs.get(STATE_PREF) || "null"), null);
+	if (!was) return;
+	geometry = was.geometry || null;
+	if (was.axis === "books" || was.axis === "tags") axis = was.axis;
+	if (was.view && was.view.kind) view = was.view;
+	if (typeof was.scope === "number") scope = was.scope;
+}
+
+function saveState(win) {
+	safe(() => {
+		if (win && !win.closed && win.outerWidth > 200) {
+			geometry = { w: win.outerWidth, h: win.outerHeight, x: win.screenX, y: win.screenY };
+		}
+		Zotero.Prefs.set(STATE_PREF, JSON.stringify({ geometry, axis, view, scope }));
+	});
+}
+
+// A window remembered on one screen can be off every screen on the next launch.
+function features(main) {
+	const g = geometry;
+	if (!g || !(g.w > 200) || !(g.h > 200)) return "chrome,centerscreen,resizable,scrollbars,width=1000,height=740";
+	let where = "centerscreen";
+	const screen = safe(() => main.screen, null);
+	if (screen && g.x > -g.w + 100 && g.y >= 0
+		&& g.x < screen.availWidth - 100 && g.y < screen.availHeight - 100) {
+		where = `screenX=${Math.round(g.x)},screenY=${Math.round(g.y)}`;
+	}
+	return `chrome,resizable,scrollbars,width=${Math.round(g.w)},height=${Math.round(g.h)},${where}`;
 }
 
 
@@ -187,6 +223,20 @@ function neighbours(rows, tag, limit = 14) {
 	return [...m].map(([t, n]) => ({ tag: t, n }))
 		.sort((a, b) => b.n - a.n || a.tag.localeCompare(b.tag))
 		.slice(0, limit);
+}
+
+// The markup tags stripped, for anything that wants the words alone.
+const plain = (str) => str.replace(MARKUP, "");
+
+// A highlight as something you can paste into what you are writing: the quote,
+// where it came from, and what you said about it.
+function asText(e) {
+	const where = [e.creator, plain(e.title), e.page && "p. " + e.page].filter(Boolean).join(", ");
+	return [
+		e.text ? `\u201C${plain(e.text)}\u201D` : `[${e.type}]`,
+		where && "\u2014 " + where,
+		plain(e.comment),
+	].filter(Boolean).join("\n");
 }
 
 // Highlights read as a book at a time, in reading order. Keyed on the book, not
@@ -563,8 +613,12 @@ body { margin:0; height:100vh; display:flex; flex-direction:column;
 .book { margin:18px 0 6px; padding-bottom:3px; border-bottom:1px solid GrayText;
 	font-weight:700; display:flex; justify-content:space-between; gap:8px; }
 .book .n { color:GrayText; font-weight:400; font-size:11px; white-space:nowrap; }
-.hl { border-left:4px solid var(--c); padding:5px 8px; margin:6px 0; border-radius:0 4px 4px 0;
-	cursor:pointer; background:color-mix(in srgb, var(--c) 10%, Canvas); }
+.hl { position:relative; border-left:4px solid var(--c); padding:5px 8px; margin:6px 0;
+	border-radius:0 4px 4px 0; cursor:pointer; background:color-mix(in srgb, var(--c) 10%, Canvas); }
+.hl .copy { position:absolute; top:4px; right:4px; opacity:0; font:11px sans-serif; padding:1px 8px;
+	border:1px solid GrayText; border-radius:5px; background:Canvas; color:CanvasText; cursor:pointer; }
+.hl:hover .copy, .hl .copy:focus { opacity:1; }
+.hl .copy:hover { background:Highlight; color:HighlightText; }
 .hl:hover { background:color-mix(in srgb, var(--c) 22%, Canvas); }
 .hl .t { white-space:pre-wrap; }
 .hl .c { white-space:pre-wrap; margin-top:5px; padding-left:8px; border-left:2px solid GrayText;
@@ -637,9 +691,9 @@ function open(collection) {
 	}
 	// about:blank rather than a packaged XHTML: opened from a chrome window it
 	// inherits chrome privileges, and the whole document is built here anyway.
-	win = main.openDialog("about:blank", "tag-explorer",
-		"chrome,centerscreen,resizable,scrollbars,width=1000,height=740");
+	win = main.openDialog("about:blank", "tag-explorer", features(main));
 	if (!win) return;
+	win.addEventListener("unload", () => saveState(win));
 	const go = () => safe(() => build(win));
 	if (win.document.readyState === "complete") go();
 	else win.addEventListener("load", go, { once: true });
@@ -668,8 +722,21 @@ function build(w) {
 	doc.title = "Tag Explorer";
 	doc.head.replaceChildren(el(doc, "style", null, CSS));
 	doc.body.replaceChildren();
+	const typing = (e) => /^(input|textarea)$/i.test(e.target.tagName || "");
+
 	doc.addEventListener("keydown", (e) => {
-		if (e.key === "Escape") return w.close();
+		// Escape peels one layer at a time. Closing the window on the first
+		// press threw away everything you had narrowed down.
+		if (e.key === "Escape") {
+			if (hlQuery) { hlQuery = ""; return renderRight(); }
+			if (search.value) { search.value = ""; return renderLeft(); }
+			return w.close();
+		}
+		if ((e.key === "/" && !typing(e)) || (e.key === "f" && (e.metaKey || e.ctrlKey))) {
+			e.preventDefault();
+			search.focus();
+			return search.select();
+		}
 		if (!e.altKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
 		e.preventDefault();
 		step(e.key === "ArrowLeft" ? -1 : 1);
@@ -1033,10 +1100,9 @@ function build(w) {
 
 		box.addEventListener("input", () => { hlQuery = box.value; sync(); });
 		box.addEventListener("keydown", (ev) => {
-			if (ev.key !== "Escape") return;
-			ev.stopPropagation();          // or the document handler closes the window
+			if (ev.key !== "Escape" || !box.value) return;   // empty: let the layering take over
+			ev.stopPropagation();
 			ev.preventDefault();
-			if (!box.value) return box.blur();
 			box.value = "";
 			hlQuery = "";
 			sync();
@@ -1388,6 +1454,16 @@ function build(w) {
 			meta.append(chip);
 		}
 		if (meta.childNodes.length) box.append(meta);
+
+		const copy = el(doc, "button", "copy", "Copy");
+		copy.title = "Copy the quote, where it is from, and your comment";
+		copy.addEventListener("click", (ev) => {
+			ev.stopPropagation();                 // not a request to open the reader
+			safe(() => Zotero.Utilities.Internal.copyTextToClipboard(asText(e)));
+			copy.textContent = "Copied";
+			w.setTimeout(() => { copy.textContent = "Copy"; }, 1200);
+		});
+		box.append(copy);
 		box.addEventListener("click", () => safe(() => {
 			const main = Zotero.getMainWindow();
 			const item = Zotero.Items.get(e.id);
@@ -1422,6 +1498,7 @@ function build(w) {
 // launch. The index is built the first time the window is opened.
 function startup({ id }) {
 	loadDismissed();
+	loadState();
 	menuID = Zotero.MenuManager.registerMenu({
 		menuID: "tag-explorer",
 		pluginID: id,
@@ -1463,7 +1540,7 @@ function shutdown() {
 	if (menuID) Zotero.MenuManager.unregisterMenu(menuID);
 	if (collectionMenuID) Zotero.MenuManager.unregisterMenu(collectionMenuID);
 	menuID = collectionMenuID = null;
-	if (win && !win.closed) win.close();
+	if (win && !win.closed) { safe(() => saveState(win)); win.close(); }
 	win = null;
 	entries = [];
 	counts = [];
@@ -1475,5 +1552,5 @@ function uninstall() {}
 
 // node-only: lets test.js import the pure helpers; no-op inside Zotero.
 if (typeof module !== "undefined") {
-	module.exports = { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, matchText, neighbours, matchBooks, bookList, related, dupeClusters, nearMisses, clusterKey, withoutDismissed, groupByBook };
+	module.exports = { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, matchText, neighbours, matchBooks, bookList, related, dupeClusters, nearMisses, clusterKey, withoutDismissed, plain, asText, groupByBook };
 }
