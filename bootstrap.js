@@ -13,7 +13,7 @@
  */
 
 const TAG_CAP = 400;   // rows rendered per search — tags or books
-const BOOK_TAGS = 24;  // tag chips shown on a book before "+N more"      // tag rows rendered per search — the rest are a count
+const BOOK_TAGS = 24;  // tag chips shown on a book before "+N more"
 const HL_CAP = 200;       // highlights rendered per tag before "show all"
 
 let menuID = null;
@@ -33,6 +33,7 @@ let scope = null;         // collection id the view is restricted to, or null
 let axis = "tags";        // which list the left pane offers: "tags" | "books"
 let relOpen = false;      // is the related-books list unfolded? remembered
                           // across books, since it is a density preference
+let keyHandler = null;    // the document listener, so rebuilding replaces it
 let view = null;          // what the right pane shows:
                           //   { kind: "tag" | "book" | "find", value }
 
@@ -500,14 +501,19 @@ async function loadLibraryTags() {
 		t.libs.add(r.lib);
 	}
 	libTags = [...m.values()];
+	recountDupes();
+}
+
+// Around 100ms over a real library, so it runs when the tags or the dismissals
+// change — not on every collection change and every press of Back, which is
+// where it used to sit.
+function recountDupes() {
+	dupes = withoutDismissed(dupeClusters(libTags), dismissed);
+	nears = withoutDismissed(nearMisses(libTags), dismissed);
 }
 
 function rescope() {
 	counts = tagCounts(entries.filter(inScope));
-	// Here rather than in the render: this runs on a scope change or a merge,
-	// not on every keystroke.
-	dupes = withoutDismissed(dupeClusters(libTags), dismissed);
-	nears = withoutDismissed(nearMisses(libTags), dismissed);
 	if (!view) return;
 	// A view that the new scope has emptied is not a view any more.
 	if (view.kind === "tag" && !counts.some((c) => c.tag === view.value)) view = null;
@@ -761,7 +767,12 @@ function build(w) {
 	doc.body.replaceChildren();
 	const typing = (e) => /^(input|textarea)$/i.test(e.target.tagName || "");
 
-	doc.addEventListener("keydown", (e) => {
+	// build() runs again on Refresh, and once more when the first index load
+	// lands, so without this the document collects a handler per build. Every
+	// copy fires: Escape peeled a layer in one and closed the window in the
+	// next, Alt+arrow stepped twice, and the dead ones pinned old DOM alive.
+	if (keyHandler) doc.removeEventListener("keydown", keyHandler);
+	keyHandler = (e) => {
 		// Escape peels one layer at a time. Closing the window on the first
 		// press threw away everything you had narrowed down.
 		if (e.key === "Escape") {
@@ -777,7 +788,8 @@ function build(w) {
 		if (!e.altKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
 		e.preventDefault();
 		step(e.key === "ArrowLeft" ? -1 : 1);
-	});
+	};
+	doc.addEventListener("keydown", keyHandler);
 
 	if (!entries.length && loading) {
 		doc.body.append(el(doc, "div", "empty", "Reading your annotations…"));
@@ -1307,6 +1319,7 @@ function build(w) {
 			const key = clusterKey(names);
 			dismissed = dismissed.filter((d) => clusterKey(d) !== key);
 			saveDismissed();
+			recountDupes();
 			rescope();
 			renderLeft();
 			renderRight();
@@ -1342,6 +1355,7 @@ function build(w) {
 		no.addEventListener("click", () => {
 			dismissed.push(namesOf(c));
 			saveDismissed();
+			recountDupes();
 			rescope();
 			renderLeft();
 			renderRight();
@@ -1504,10 +1518,14 @@ function build(w) {
 			ev.stopPropagation();                 // not a request to open the reader
 			safe(() => Zotero.Utilities.Internal.copyTextToClipboard(asText(e)));
 			copy.textContent = "Copied";
-			w.setTimeout(() => { copy.textContent = "Copy"; }, 1200);
+			w.setTimeout(() => { if (!w.closed) copy.textContent = "Copy"; }, 1200);
 		});
 		box.append(copy);
 		box.addEventListener("click", () => safe(() => {
+			// Dragging across the words to copy them by hand ends in a click on
+			// the card, and opening the reader was not what that meant.
+			const sel = w.getSelection();
+			if (sel && !sel.isCollapsed) return;
 			const main = Zotero.getMainWindow();
 			const item = Zotero.Items.get(e.id);
 			if (!main || !item) return;
@@ -1574,7 +1592,7 @@ function openWith(collection) {
 }
 
 function onMainWindowLoad({ window }) {
-	window.MozXULElement.insertFTLIfNeeded("tag-explorer.ftl");
+	safe(() => window.MozXULElement.insertFTLIfNeeded("tag-explorer.ftl"));
 }
 
 function onMainWindowUnload() {}
