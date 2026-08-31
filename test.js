@@ -153,6 +153,16 @@ assert.deepStrictEqual(d.map((c) => [c.why, c.tags.map((t) => t.tag)]), [
 	["singular and plural", ["rough path", "rough paths"]],
 ]);
 
+// A plural only folds when the singular is a word on its own. Short tags are
+// abbreviations, and "vs"/"v" pre-selected under "safe to merge" is data loss.
+const pl = dupeClusters([
+	tag("APIs", 4), tag("API", 9),
+	tag("vs", 9), tag("v", 4),
+	tag("Ms", 2), tag("M", 7),
+	tag("gas", 5), tag("ga", 1),
+]);
+assert.deepStrictEqual(pl.map((c) => c.tags.map((t) => t.tag)), [["API", "APIs"]]);
+
 // Hyphens, dashes and underscores are just someone else's space.
 const hy = dupeClusters([
 	tag("machine learning", 6), tag("machine-learning", 1),

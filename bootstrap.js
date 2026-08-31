@@ -293,7 +293,10 @@ function groupByBook(list) {
 const squash = (t) => t.normalize("NFC").trim().replace(/\s+/g, " ");
 const fold = (t) => squash(t).toLowerCase();
 const loose = (t) => fold(t).replace(/[-\u2010-\u2015_]+/g, " ").replace(/\s+/g, " ").trim();
-const stem = (t) => loose(t).replace(/s$/, "");
+// A trailing "s" only folds off a word long enough for the singular to be a
+// word: "APIs"/"API" is one tag written twice, but "vs"/"v" and "Ms"/"M" are
+// two tags, and they were being offered pre-selected under "safe to merge".
+const stem = (t) => { const s = loose(t); return s.length >= 4 ? s.replace(/s$/, "") : s; };
 
 function why(tags) {
 	if (new Set(tags.map((t) => t.toLowerCase())).size === 1) return "capitalisation";
@@ -487,12 +490,21 @@ const inScope = (e) => !scope || e.colls.has(scope);
 // renaming a tag moves every item carrying it, so a pair like "Entropy"/"entropy"
 // that lives only on books is exactly as much a duplicate as one on highlights.
 async function loadLibraryTags() {
+	// An annotation is in the trash when its attachment or the book above it is,
+	// without a row of its own — so all three levels are checked. And the whole
+	// index waits on this: a query that fails costs the duplicates panel, not
+	// the window.
 	const rows = await Zotero.DB.queryAsync(
 		"SELECT t.name AS tag, i.libraryID AS lib, COUNT(*) AS n "
 		+ "FROM itemTags it JOIN tags t ON t.tagID = it.tagID "
 		+ "JOIN items i ON i.itemID = it.itemID "
+		+ "LEFT JOIN itemAnnotations an ON an.itemID = it.itemID "
+		+ "LEFT JOIN itemAttachments att ON att.itemID = an.parentItemID "
 		+ "LEFT JOIN deletedItems d ON d.itemID = it.itemID "
-		+ "WHERE d.itemID IS NULL GROUP BY t.name, i.libraryID");
+		+ "LEFT JOIN deletedItems da ON da.itemID = an.parentItemID "
+		+ "LEFT JOIN deletedItems dt ON dt.itemID = att.parentItemID "
+		+ "WHERE d.itemID IS NULL AND da.itemID IS NULL AND dt.itemID IS NULL "
+		+ "GROUP BY t.name, i.libraryID").catch((e) => { oops(e); return []; });
 	const m = new Map();
 	for (const r of rows) {
 		let t = m.get(r.tag);
@@ -502,6 +514,15 @@ async function loadLibraryTags() {
 	}
 	libTags = [...m.values()];
 	recountDupes();
+}
+
+// Every library a tag is used in. The annotation index only knows the ones with
+// highlights, and a rename moves items: a tag sitting on books in a group
+// library is still that tag, and leaving it behind is a half-done rename.
+function libsOf(tag) {
+	const known = libTags.find((x) => x.tag === tag);
+	if (known && known.libs.size) return known.libs;
+	return new Set(entries.filter((e) => e.tags.includes(tag)).map((e) => e.libraryID));
 }
 
 // Around 100ms over a real library, so it runs when the tags or the dismissals
@@ -765,31 +786,16 @@ function build(w) {
 	doc.title = "Tag Explorer";
 	doc.head.replaceChildren(el(doc, "style", null, CSS));
 	doc.body.replaceChildren();
-	const typing = (e) => /^(input|textarea)$/i.test(e.target.tagName || "");
 
 	// build() runs again on Refresh, and once more when the first index load
 	// lands, so without this the document collects a handler per build. Every
 	// copy fires: Escape peeled a layer in one and closed the window in the
 	// next, Alt+arrow stepped twice, and the dead ones pinned old DOM alive.
+	// The new one goes on at the bottom, once what it reaches for exists: on
+	// the loading path below, `search` and `hlQuery` are still in the dead
+	// zone, and every key press threw instead of closing the window.
 	if (keyHandler) doc.removeEventListener("keydown", keyHandler);
-	keyHandler = (e) => {
-		// Escape peels one layer at a time. Closing the window on the first
-		// press threw away everything you had narrowed down.
-		if (e.key === "Escape") {
-			if (hlQuery) { hlQuery = ""; return renderRight(); }
-			if (search.value) { search.value = ""; return renderLeft(); }
-			return w.close();
-		}
-		if ((e.key === "/" && !typing(e)) || (e.key === "f" && (e.metaKey || e.ctrlKey))) {
-			e.preventDefault();
-			search.focus();
-			return search.select();
-		}
-		if (!e.altKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
-		e.preventDefault();
-		step(e.key === "ArrowLeft" ? -1 : 1);
-	};
-	doc.addEventListener("keydown", keyHandler);
+	keyHandler = null;
 
 	if (!entries.length && loading) {
 		doc.body.append(el(doc, "div", "empty", "Reading your annotations…"));
@@ -804,6 +810,7 @@ function build(w) {
 	const countLabel = el(doc, "span", "n", "");
 	const refresh = el(doc, "button", null, "Refresh");
 	refresh.addEventListener("click", () => {
+		if (loading) return;          // a second click would race the first rebuild
 		entries = [];
 		loading = buildIndex().catch(oops).finally(() => { loading = null; });
 		build(w);
@@ -1114,14 +1121,18 @@ function build(w) {
 				let room = cap;
 				for (const book of groupByBook(rows)) {
 					if (room <= 0) break;
+					const shown = book.rows.slice(0, room);
 					const head = el(doc, "div", "book");
 					const name = bookName(book);
 					name.title = "Show this book";
 					name.addEventListener("click", () => jumpToBook(book.book));
-					head.append(name, el(doc, "span", "n", `${book.rows.length}`));
+					// The last book under the cap gets cut off, and a bare total
+					// over two cards reads as a bug.
+					head.append(name, el(doc, "span", "n", shown.length < book.rows.length
+						? `${shown.length} of ${book.rows.length}` : `${book.rows.length}`));
 					list.append(head);
-					for (const e of book.rows.slice(0, room)) list.append(card(e));
-					room -= book.rows.length;
+					for (const e of shown) list.append(card(e));
+					room -= shown.length;
 				}
 			}
 			if (rows.length > cap) {
@@ -1247,21 +1258,21 @@ function build(w) {
 			const head = el(doc, "div", "relh");
 			head.append(caret, el(doc, "span", null, "related books"),
 				el(doc, "b", null, String(rel.length)));
-			const rows = el(doc, "div");
-			rows.hidden = !relOpen;
+			const relRows = el(doc, "div");
+			relRows.hidden = !relOpen;
 			head.addEventListener("click", () => {
 				relOpen = !relOpen;
-				rows.hidden = !relOpen;
+				relRows.hidden = !relOpen;
 				caret.textContent = relOpen ? "\u25BE" : "\u25B8";
 			});
-			box.append(head, rows);
+			box.append(head, relRows);
 			for (const r of rel) {
 				const row = el(doc, "div", "row");
 				row.title = "Show this book";
 				row.append(bookName(r), el(doc, "b", null,
 					`${r.shared} shared tag${r.shared === 1 ? "" : "s"}`));
 				row.addEventListener("click", () => jumpToBook(r.book));
-				rows.append(row);
+				relRows.append(row);
 			}
 			right.append(box);
 		}
@@ -1348,7 +1359,7 @@ function build(w) {
 		const go = el(doc, "button", null, maybe ? "Merge\u2026" : "Merge");
 		let keep = maybe ? null : c.tags[0].tag;
 		go.disabled = !keep;
-		go.addEventListener("click", () => keep && mergeCluster(c, keep, box));
+		go.addEventListener("click", () => keep && mergeCluster(c, keep));
 
 		const no = el(doc, "button", null, "Not duplicates");
 		no.title = "Never suggest these again";
@@ -1384,16 +1395,17 @@ function build(w) {
 
 	// Every other spelling renamed onto the survivor. No merge warning here —
 	// absorbing them is the whole point, and the counts are on screen.
-	async function mergeCluster(c, keep, box) {
+	async function mergeCluster(c, keep) {
+		let failed = null;
 		for (const t of c.tags) {
 			if (t.tag === keep) continue;
-			const known = libTags.find((x) => x.tag === t.tag);
-			const libs = known ? known.libs : new Set();
+			const libs = libsOf(t.tag);
 			try {
 				for (const lib of libs) await Zotero.Tags.rename(lib, t.tag, keep);
 			} catch (e) {
 				oops(e);
-				return box.append(el(doc, "div", "err", `Could not merge: ${e.message}`));
+				failed = e;
+				break;      // the spellings before this one did move: repaint, then say so
 			}
 			renameInList(entries, t.tag, keep, libs);
 		}
@@ -1402,6 +1414,7 @@ function build(w) {
 		countLabel.textContent = summary();
 		renderLeft();
 		renderRight();
+		if (failed) right.prepend(el(doc, "div", "err", `Could not merge: ${failed.message}`));
 	}
 
 	function startRename(title) {
@@ -1472,7 +1485,7 @@ function build(w) {
 	// limited to annotations, or to the collection currently in scope.
 	async function doRename(tag, next, merging) {
 		if (!next || next === tag) return renderRight();
-		const libs = new Set(entries.filter((e) => e.tags.includes(tag)).map((e) => e.libraryID));
+		const libs = libsOf(tag);
 		if (!merging) {
 			const n = await countTagged(next, libs);
 			if (n) return warnMerge(tag, next, n);
@@ -1487,6 +1500,7 @@ function build(w) {
 		renameInList(entries, tag, next, libs);
 		view = { kind: "tag", value: next };
 		for (const t of trail) if (t.view && t.view.kind === "tag" && t.view.value === tag) t.view = view;
+		await loadLibraryTags();   // or the duplicates panel still offers the old name
 		rescope();
 		countLabel.textContent = summary();
 		renderLeft();
@@ -1547,6 +1561,26 @@ function build(w) {
 		const on = listBox.querySelector(".tag.on");
 		if (on) on.scrollIntoView({ block: "nearest" });
 	});
+
+	const typing = (e) => /^(input|textarea)$/i.test(e.target.tagName || "");
+	keyHandler = (e) => {
+		// Escape peels one layer at a time. Closing the window on the first
+		// press threw away everything you had narrowed down.
+		if (e.key === "Escape") {
+			if (hlQuery) { hlQuery = ""; return renderRight(); }
+			if (search.value) { search.value = ""; return renderLeft(); }
+			return w.close();
+		}
+		if ((e.key === "/" && !typing(e)) || (e.key === "f" && (e.metaKey || e.ctrlKey))) {
+			e.preventDefault();
+			search.focus();
+			return search.select();
+		}
+		if (!e.altKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+		e.preventDefault();
+		step(e.key === "ArrowLeft" ? -1 : 1);
+	};
+	doc.addEventListener("keydown", keyHandler);
 
 	setScope(scope);
 	search.focus();
