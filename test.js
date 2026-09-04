@@ -1,6 +1,6 @@
 // Self-check for the pure helpers: `node test.js`.
 const assert = require("assert");
-const { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, markRuns, matchText, neighbours, matchBooks, bookList, related, dupeClusters, nearMisses, clusterKey, withoutDismissed, groupByBook } = require("./bootstrap.js");
+const { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, markRuns, matchText, neighbours, matchBooks, bookList, related, dupeClusters, nearMisses, clusterKey, withoutDismissed, groupByBook, splitMath, fitsAsMath } = require("./bootstrap.js");
 
 assert.ok(fuzzy("", "anything"));
 assert.ok(fuzzy("mdv", "medieval"));
@@ -134,6 +134,42 @@ assert.deepStrictEqual(neighbours(graph, "Weber"), [{ tag: "iron cage", n: 1 }])
 assert.deepStrictEqual(neighbours(graph, "iron cage"), [{ tag: "Weber", n: 1 }]);
 assert.deepStrictEqual(neighbours(graph, "nobody"), []);          // a tag with no company
 assert.strictEqual(neighbours(graph, "Arendt", 1).length, 1);     // honours the limit
+
+// --- LaTeX ----------------------------------------------------------------
+const runs = (s) => splitMath(s).map((r) =>
+	!r.math ? r.text : r.display ? "[[" + r.text + "]]" : "[" + r.text + "]");
+
+// The four delimiter styles a person actually types.
+assert.deepStrictEqual(runs("Let $C^*$-algebras be given."),
+	["Let ", "[C^*]", "-algebras be given."]);
+assert.deepStrictEqual(runs("so $$\\int_0^1 f = 1$$ follows"),
+	["so ", "[[\\int_0^1 f = 1]]", " follows"]);
+assert.deepStrictEqual(runs("\\(x^2\\) and \\[y=mx+b\\]"),
+	["[x^2]", " and ", "[[y=mx+b]]"]);
+
+// A bare environment is already display maths and needs no delimiters.
+assert.deepStrictEqual(runs("see \\begin{align} a &= b \\end{align} above"),
+	["see ", "[[\\begin{align} a &= b \\end{align}]]", " above"]);
+
+// A "$" is a currency sign more often than a delimiter, and an unbalanced one
+// must not swallow the rest of the highlight.
+assert.deepStrictEqual(runs("raised $5 million and $10 million"),
+	["raised $5 million and $10 million"]);
+assert.deepStrictEqual(runs("unbalanced $x + y and then prose"),
+	["unbalanced $x + y and then prose"]);
+assert.deepStrictEqual(runs("escaped \\$5 is money"), ["escaped \\$5 is money"]);
+
+// A "$" inside a group belongs to the formula, not to its delimiters.
+assert.deepStrictEqual(runs("$$\\tag{$\\ast$} x = 1$$"), ["[[\\tag{$\\ast$} x = 1]]"]);
+
+// Cyrillic prose around a formula, which is most of this library.
+assert.deepStrictEqual(runs("\u043f\u043b\u043e\u0442\u043d\u043e\u0441\u0442\u044c $\\rho$ \u0437\u0434\u0435\u0441\u044c"),
+	["\u043f\u043b\u043e\u0442\u043d\u043e\u0441\u0442\u044c ", "[\\rho]", " \u0437\u0434\u0435\u0441\u044c"]);
+
+// An unclosed delimiter that ran away is not typeset; an environment may be
+// as long as it is.
+assert.ok(!fitsAsMath("x".repeat(401)));
+assert.ok(fitsAsMath("\\begin{align}" + "x".repeat(900) + "\\end{align}"));
 
 // --- duplicate tags ------------------------------------------------------
 const tag = (t, n) => ({ tag: t, n });

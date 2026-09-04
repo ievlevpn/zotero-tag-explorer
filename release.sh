@@ -27,7 +27,7 @@ if [ -z "$CHANGES" ]; then
 fi
 
 rm -f "$XPI"
-zip -q -r "$XPI" manifest.json bootstrap.js locale icons
+zip -q -r "$XPI" manifest.json bootstrap.js locale icons katex.min.js katex.min.css fonts LICENSE-KaTeX
 
 # Regenerate update.json so update_link always points at this version's asset.
 REPO="$REPO" node -e '

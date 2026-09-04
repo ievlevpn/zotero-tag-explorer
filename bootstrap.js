@@ -250,8 +250,122 @@ function markRuns(str, words) {
 	return out;
 }
 
-// The markup tags stripped, for anything that wants the words alone.
+// The markup tags stripped, for anything that wants the words alone. The LaTeX
+// stays: a formula's source is what you want on the clipboard.
 const plain = (str) => str.replace(MARKUP, "");
+
+// --- LaTeX ------------------------------------------------------------------
+
+// A run of "math" longer than this is an unbalanced delimiter that swallowed
+// the paragraph, not an equation.
+const MATH_CAP = 400;
+
+// Outside a maths library a "$" is a currency sign far more often than a
+// delimiter — "paid $5 and $10" must not become an equation. So a $…$ run has
+// to look like maths: a TeX command, a script or a group; or a single token; or
+// something with no words in it. The \(…\) and \[…\] forms are unambiguous
+// and skip the test.
+function looksLikeMath(s) {
+	if (/[\\^_{}]/.test(s)) return true;   // a command, a script, a group
+	if (!/\s/.test(s)) return true;         // one token: "$n$", "$x+y$"
+	return !/[a-z]{3,}/.test(s);            // prose has words; "$x + y$" has none
+}
+
+// Display environments that are written with no delimiters around them at all.
+// LaTeX needs none — \begin{align*} is already display maths — so somebody
+// pasting an equation out of a paper has no reason to add any.
+const ENVS = /^\\begin\{(align|alignat|equation|eqnarray|gather|multline|split|flalign)(\*?)\}/;
+
+// The cap catches a delimiter that never closed. An environment cannot be that
+// — it was only taken because its own \end was found — so it may run as long
+// as it likes.
+const fitsAsMath = (tex) => tex.length <= MATH_CAP || ENVS.test(tex);
+
+// A math run put back as source. Not necessarily the delimiters it was written
+// with — \(x\) comes back as $x$ — but the same formula, and a reader can see
+// where it starts and stops.
+const delim = (run) => run.display ? "$$" + run.text + "$$" : "$" + run.text + "$";
+
+// Split text into alternating plain and math runs. All four delimiter styles a
+// person actually types turn up in annotations: $…$ and $$…$$ from anyone who
+// writes TeX, \(…\) and \[…\] from anyone who has been told not to. A "$"
+// escaped as "\$" is a literal dollar and never opens math, and an unbalanced
+// delimiter is left exactly as found rather than swallowing the rest of the
+// highlight.
+function splitMath(text) {
+	const s = text || "";
+	const out = [];
+	let plain = "";
+	let i = 0;
+	const flush = () => { if (plain) { out.push({ math: false, display: false, text: plain }); plain = ""; } };
+
+	while (i < s.length) {
+		const c = s[i];
+
+		if (c === "\\") {
+			// A bare environment is its own delimiter: take it whole, through to
+			// the \end that closes it, and hand KaTeX the lot in display mode.
+			const env = ENVS.exec(s.slice(i));
+			if (env) {
+				const tail = "\\end{" + env[1] + env[2] + "}";
+				const end = s.indexOf(tail, i);
+				if (end >= 0) {
+					flush();
+					out.push({ math: true, display: true, text: s.slice(i, end + tail.length) });
+					i = end + tail.length;
+					continue;
+				}
+			}
+			const open = s[i + 1];
+			const close = open === "(" ? "\\)" : open === "[" ? "\\]" : "";
+			if (close) {
+				const end = s.indexOf(close, i + 2);
+				if (end < 0) { plain += s.slice(i); break; }   // unbalanced
+				flush();
+				out.push({ math: true, display: open === "[", text: s.slice(i + 2, end) });
+				i = end + 2;
+				continue;
+			}
+			plain += s.slice(i, i + 2);   // an escaped literal: \$ \% \\
+			i += 2;
+			continue;
+		}
+
+		if (c !== "$") { plain += s[i++]; continue; }
+
+		const display = s[i + 1] === "$";
+		const start = i;
+		let j = i + (display ? 2 : 1);
+		let body = "";
+		let closed = false;
+		let depth = 0;
+		while (j < s.length) {
+			if (s[j] === "\\" && j + 1 < s.length) { body += s.slice(j, j + 2); j += 2; continue; }
+			const ch = s[j];
+			// A "$" inside a group belongs to the formula, not to its delimiters:
+			// "$$\tag{$\ast$}…$$" is one run, and closing at the first bare "$"
+			// would leave \tag{ as the whole equation and shred the rest.
+			if (ch === "{") depth++;
+			else if (ch === "}") depth = Math.max(0, depth - 1);
+			// Display maths is closed by "$$", never by a single "$".
+			else if (ch === "$" && depth === 0 && (!display || s[j + 1] === "$")) { closed = true; break; }
+			body += s[j++];
+		}
+		if (!closed) { plain += s.slice(start); break; }   // unbalanced
+		if (!display && !looksLikeMath(body)) {
+			// Not maths: keep the "$" and rescan from just after it, so the one
+			// that closed this run is free to open a real one.
+			plain += s[start];
+			i = start + 1;
+			continue;
+		}
+		flush();
+		out.push({ math: true, display, text: body });
+		i = j + (display ? 2 : 1);
+	}
+	flush();
+	return out;
+}
 
 // A highlight as something you can paste into what you are writing: the quote,
 // where it came from, and what you said about it.
@@ -410,6 +524,102 @@ function related(rows, book, limit = 8) {
 		if (shared) out.push({ book: b.book, title: b.title, creator: b.creator, shared });
 	}
 	return out.sort((a, b) => b.shared - a.shared || a.title.localeCompare(b.title)).slice(0, limit);
+}
+
+// --- KaTeX -----------------------------------------------------------------
+
+// Formulas are typeset by KaTeX, bundled with the plugin. It is loaded once
+// into a plain object rather than into the explorer window: that is the target
+// loadSubScript is happiest with — it is how Zotero loads plugin bootstraps —
+// and it means KaTeX never needs a `document` of its own, since renderToString
+// gives back markup which is then parsed into the pane.
+let rootURI = null;    // plugin root, set at startup
+let katexLib = null;   // the library, once loaded
+let katexCSS = null;   // its stylesheet, with the font URLs made absolute
+let katexError = "";   // why it is missing, if it is
+
+// A replaced .xpi keeps its old entry in the platform's zip cache, so the first
+// read out of the new one fails with "Error opening input stream". Reinstalling
+// the same version is when this bites, since nothing else about the file
+// changed. Dropping the stale entry is what the add-on manager itself does
+// after it swaps a file in. Harmless when the plugin runs from a directory.
+function flushPluginCache() {
+	safe(() => {
+		const jar = Services.io.newURI(rootURI)
+			.QueryInterface(Components.interfaces.nsIJARURI).JARFile
+			.QueryInterface(Components.interfaces.nsIFileURL).file;
+		Services.obs.notifyObservers(jar, "flush-cache-entry");
+	});
+}
+
+async function loadKatex() {
+	if (katexLib || katexError || !rootURI) return;
+	// Two goes: a first failure is usually the stale cache entry above, and the
+	// read after flushing it succeeds.
+	for (let attempt = 0; attempt < 2; attempt++) {
+		try {
+			// Hand the bundle the CommonJS hooks its UMD header checks for
+			// first: seeing `module` and `exports` as objects, it assigns to
+			// module.exports. That is deterministic. The other branch assigns to
+			// `globalThis`, and under loadSubScript the target object is only on
+			// the scope chain — the global stays whatever compartment the script
+			// was compiled in, so the library would land somewhere we never look.
+			const scope = { module: { exports: {} } };
+			scope.exports = scope.module.exports;
+			Services.scriptloader.loadSubScript(rootURI + "katex.min.js", scope, "UTF-8");
+			const lib = typeof scope.module.exports.renderToString === "function"
+				? scope.module.exports : scope.katex;
+			if (!lib || typeof lib.renderToString !== "function") {
+				throw new Error("katex.min.js ran but exported no renderToString");
+			}
+			const css = await Zotero.File.getResourceAsync(rootURI + "katex.min.css");
+			// The stylesheet is inlined, so its relative font URLs would resolve
+			// against about:blank. Absolute against the plugin root instead.
+			katexCSS = css.replace(/url\(fonts\//g, "url(" + rootURI + "fonts/");
+			katexLib = lib;
+			return;
+		}
+		catch (e) {
+			if (attempt === 0) { flushPluginCache(); continue; }
+			oops(e);
+			katexError = (e && e.message) || String(e);
+		}
+	}
+}
+
+// KaTeX's own stylesheet, put back after build() clears the head.
+function ensureKatexCSS(doc) {
+	if (!katexCSS) return;
+	safe(() => {
+		if (doc.getElementById("katex-css")) return;
+		const style = el(doc, "style", null, katexCSS);
+		style.id = "katex-css";
+		(doc.head || doc.documentElement).append(style);
+	});
+}
+
+// KaTeX's output is markup we generated ourselves from `tex` with trust:false,
+// so it is parsed straight in rather than sanitized — trust:false is what keeps
+// \href and friends out of it.
+function katexFragment(doc, html) {
+	return safe(() => {
+		const parsed = new doc.defaultView.DOMParser().parseFromString(html, "text/html");
+		const frag = doc.createDocumentFragment();
+		for (const n of [...parsed.body.childNodes]) frag.append(doc.importNode(n, true));
+		return frag;
+	}, null);
+}
+
+// One formula, typeset into `parent`.
+function mathInto(doc, parent, tex, display) {
+	// throwOnError keeps one bad formula from taking out the card: KaTeX renders
+	// what it can and marks the rest in place.
+	const html = safe(() => katexLib.renderToString(tex, {
+		displayMode: !!display, throwOnError: false, strict: false, trust: false,
+	}), null);
+	const frag = html && katexFragment(doc, html);
+	// It refused outright: the source reads better than nothing.
+	parent.append(frag || tex);
 }
 
 // --- the index -------------------------------------------------------------
@@ -685,6 +895,20 @@ mark { background:color-mix(in srgb, Highlight 50%, Canvas); color:inherit;
 	align-items:center; padding-right:46px; }   /* room for the copy button */
 .hl .m i { font-style:normal; border:1px solid GrayText; border-radius:9px; padding:0 6px; cursor:pointer; }
 .hl .m i:hover { background:Highlight; color:HighlightText; }
+/* KaTeX's stylesheet is injected after this one, so these have to out-specify
+ * it rather than merely follow it. Its default 1.21em is tuned for Computer
+ * Modern beside a sans body; next to this one it reads oversized. */
+.hl .katex, .right h1 .katex, .book .katex { font-size:1.06em; }
+/* A long equation scrolls in its own strip rather than widening the card. */
+.hl .katex-display { margin:.7em 0; padding:.15em 0; overflow-x:auto; overflow-y:hidden; }
+/* A book title is one line with an ellipsis; a display block inside it is not. */
+.book .katex-display, .nm .katex-display { display:inline; margin:0; }
+/* KaTeX marks what it could not parse with inline red; !important is what it
+ * takes to override that. Muted rather than alarming: the source is still
+ * readable underneath, and half-written LaTeX in a comment is normal. */
+.katex-error { color:color-mix(in srgb, CanvasText 60%, Canvas) !important;
+	border-bottom:1px dotted color-mix(in srgb, CanvasText 40%, Canvas);
+	font-family:ui-monospace, monospace; font-size:.92em; }
 .empty { color:GrayText; padding:30px 0; text-align:center; }
 .more { display:block; margin:14px auto; font:12px sans-serif; padding:4px 12px;
 	border:1px solid GrayText; border-radius:5px; background:transparent; color:CanvasText; cursor:pointer; }
@@ -701,11 +925,26 @@ function el(doc, tag, cls, text) {
 // b/i/sub/sup — no innerHTML, nothing else gets through.
 function markup(doc, str, words) {
 	const frag = doc.createDocumentFragment();
+	const text = (s, into) => {
+		for (const run of markRuns(s, words || [])) {
+			into.append(typeof run === "string" ? run : el(doc, "mark", null, run.mark));
+		}
+	};
 	const put = (nodes, into) => {
 		for (const n of nodes) {
 			if (typeof n === "string") {
-				for (const run of markRuns(n, words || [])) {
-					into.append(typeof run === "string" ? run : el(doc, "mark", null, run.mark));
+				// Without KaTeX nothing is a formula and this is the pane it has
+				// always been: source, marks and all.
+				if (!katexLib) { text(n, into); continue; }
+				for (const run of splitMath(n)) {
+					// The filter matches the source, so a hit inside a formula
+					// would mean marking KaTeX's own spans. The typeset formula
+					// wins: it is the thing you are here to read.
+					if (run.math && fitsAsMath(run.text)) mathInto(doc, into, run.text, run.display);
+					// Too long to be an equation. splitMath dropped the
+					// delimiters on the way past, so put a pair back rather than
+					// show a formula that has quietly lost its "$".
+					else text(run.math ? delim(run) : run.text, into);
 				}
 				continue;
 			}
@@ -785,6 +1024,7 @@ function build(w) {
 	const doc = w.document;
 	doc.title = "Tag Explorer";
 	doc.head.replaceChildren(el(doc, "style", null, CSS));
+	ensureKatexCSS(doc);   // after ours, so the overrides in CSS out-specify it
 	doc.body.replaceChildren();
 
 	// build() runs again on Refresh, and once more when the first index load
@@ -812,7 +1052,7 @@ function build(w) {
 	refresh.addEventListener("click", () => {
 		if (loading) return;          // a second click would race the first rebuild
 		entries = [];
-		loading = buildIndex().catch(oops).finally(() => { loading = null; });
+		loading = reindex();
 		build(w);
 	});
 
@@ -1591,7 +1831,8 @@ function build(w) {
 // Not async, and nothing here waits on I/O: Zotero awaits every plugin's
 // startup() in sequence inside its own init, so anything slow here delays the
 // launch. The index is built the first time the window is opened.
-function startup({ id }) {
+function startup({ id, rootURI: uri }) {
+	rootURI = uri;
 	loadDismissed();
 	loadState();
 	menuID = Zotero.MenuManager.registerMenu({
@@ -1618,10 +1859,13 @@ function startup({ id }) {
 	for (const w of Zotero.getMainWindows()) onMainWindowLoad({ window: w });
 }
 
+// KaTeX rides along with the first index build, so the one "Reading your
+// annotations…" screen covers both. It is a no-op on every build after.
+const reindex = () =>
+	Promise.all([buildIndex(), loadKatex()]).catch(oops).finally(() => { loading = null; });
+
 function openWith(collection) {
-	if (!entries.length && !loading) {
-		loading = buildIndex().catch(oops).finally(() => { loading = null; });
-	}
+	if (!entries.length && !loading) loading = reindex();
 	open(collection);
 }
 
@@ -1647,5 +1891,5 @@ function uninstall() {}
 
 // node-only: lets test.js import the pure helpers; no-op inside Zotero.
 if (typeof module !== "undefined") {
-	module.exports = { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, markRuns, matchText, neighbours, matchBooks, bookList, related, dupeClusters, nearMisses, clusterKey, withoutDismissed, plain, asText, groupByBook };
+	module.exports = { fuzzy, rank, tagCounts, matchTags, matchColls, countByCollection, renameInList, parseMarkup, markRuns, matchText, neighbours, matchBooks, bookList, related, dupeClusters, nearMisses, clusterKey, withoutDismissed, plain, asText, groupByBook, splitMath, looksLikeMath, fitsAsMath };
 }

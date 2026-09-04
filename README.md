@@ -17,6 +17,15 @@ A Zotero 10 plugin for reading your own marginalia by tag.
   the four formats Zotero itself writes, `<i>` `<b>` `<sub>` `<sup>`. Only
   those, in pairs: a highlight reading `< H ≤ 1` is maths, not markup, and
   stays as it is;
+- **LaTeX, typeset.** `$…$`, `$$…$$`, `\(…\)`, `\[…\]` and a bare
+  `\begin{align}` are rendered by [KaTeX](https://katex.org), which is bundled
+  with the plugin — no network, no MathJax, nothing to configure. It reads a
+  highlight of a theorem the way the paper printed it. A `$` that is a currency
+  sign stays one (`raised $5 million and $10 million` is not an equation), an
+  unbalanced delimiter is left exactly as typed rather than swallowing the rest
+  of the highlight, and a formula KaTeX cannot parse is shown as its source
+  instead of taking the card down with it. **Copy** always copies the source;
+  the filter matches the source too, so `rho` finds `$\rho$`;
 - a filter over the highlights of the selected tag — every word you type has to
   appear somewhere in the highlight, your comment or the book, in any order, so
   `decline brown` and `brown decline` both find the same one. Matches are
@@ -140,9 +149,11 @@ then Zotero → Tools → Plugins → ⚙ → *Install Plugin From File…*
 
 No build step. The whole plugin is `bootstrap.js`.
 
-	zip -r tag-explorer.xpi manifest.json bootstrap.js locale icons
+	zip -r tag-explorer.xpi manifest.json bootstrap.js locale icons \
+	    katex.min.js katex.min.css fonts LICENSE-KaTeX
 
-and install that. `node test.js` checks the pure helpers; `./release.sh` cuts
+and install that. KaTeX 0.16.22 is vendored as shipped (MIT, see
+`LICENSE-KaTeX`); `fonts/` is its woff2 set, which is all Gecko asks for. `node test.js` checks the pure helpers; `./release.sh` cuts
 a release (bump `version` in `manifest.json` first).
 
 ## How it works
