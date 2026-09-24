@@ -47,7 +47,13 @@ fs.writeFileSync("update.json", JSON.stringify(out, null, 2) + "\n");
 '
 
 git add -A   # everything but the .xpi, which .gitignore covers
-git commit -m "Release v$VER" || echo "(nothing to commit)"
+# Skip only a genuinely empty commit - any other commit failure (hook,
+# identity) must stop the release instead of publishing the old HEAD
+if git diff --cached --quiet; then
+  echo "(nothing to commit)"
+else
+  git commit -m "Release v$VER"
+fi
 git push
 
 NOTES="## What's changed
